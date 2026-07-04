@@ -4,3 +4,4 @@ def test_key_dependencies_installed():
     import anthropic
     import pdfplumber
     import dotenv
+    import pydantic
