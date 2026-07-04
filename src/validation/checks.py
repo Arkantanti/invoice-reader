@@ -163,3 +163,35 @@ def is_valid_currency_code(currency: str) -> bool:
         return False
 
     return currency in ISO_4217_CODES
+
+from datetime import date
+from typing import Optional
+
+
+def is_issue_date_plausible(issue_date: date, reference_date: Optional[date] = None) -> bool:
+    """
+    Check that issue_date isn't in the future relative to processing time.
+
+    reference_date defaults to today if not supplied, but accepting it as
+    a parameter (rather than calling date.today() internally) keeps this
+    function pure and testable — tests can pin a fixed reference_date
+    instead of depending on the actual current date.
+    """
+    if reference_date is None:
+        reference_date = date.today()
+
+    return issue_date <= reference_date
+
+
+def is_payment_date_after_issue_date(issue_date: date, payment_date: Optional[date]) -> bool:
+    """
+    Check that payment_date, when present, doesn't fall before issue_date.
+
+    Returns True when payment_date is None — nothing to check in that case,
+    consistent with is_payment_date_consistent's handling of absent fields.
+    """
+    if payment_date is None:
+        return True
+
+    return payment_date >= issue_date
+
