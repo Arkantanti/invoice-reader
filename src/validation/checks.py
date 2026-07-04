@@ -64,6 +64,21 @@ def is_valid_iban(iban: str) -> bool:
 
     return int(numeric_str) % 97 == 1
 
+def is_known_iban_country(iban: str) -> bool:
+    """
+    Check whether an IBAN's country code is present in IBAN_LENGTHS.
+
+    This is independent of checksum/structural validity — an unknown
+    country doesn't mean the IBAN is wrong, it means country-specific
+    length enforcement couldn't be applied, which is worth surfacing
+    separately from a hard validation failure.
+    """
+    if not iban:
+        return False
+
+    country_code = iban.replace(" ", "").upper()[:2]
+    return country_code in IBAN_LENGTHS
+
 from decimal import Decimal
 
 def _normalize_for_grounding(text: str) -> str:

@@ -21,3 +21,17 @@ def test_is_valid_iban(iban, expected):
 def test_unlisted_country_falls_back_to_general_check():
     # Country not in IBAN_LENGTHS — should not hard-fail on length alone
     assert is_valid_iban("SV92CENR00000000123456789012") is True
+
+from validation.checks import is_known_iban_country
+
+@pytest.mark.parametrize("iban,expected", [
+    ("DE89370400440532013000", True),            # known country (Germany)
+    ("PL61109010140000071219812874", True),       # known country (Poland)
+    ("SV92CENR00000000123456789012", False),      # unknown country (El Salvador, not in table)
+    ("XX90000000000000000000000000", False),      # fabricated/unlisted country code
+    ("de89370400440532013000", True),             # lowercase input
+    ("", False),                                   # empty
+    (None, False),                                 # missing
+])
+def test_is_known_iban_country(iban, expected):
+    assert is_known_iban_country(iban) is expected
