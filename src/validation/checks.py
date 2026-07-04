@@ -109,3 +109,23 @@ def is_amount_grounded(extracted_amount: Decimal, raw_text: str) -> bool:
     pattern = rf"(?<!\d){int_pattern}[.,]{frac_part}(?!\d)"
 
     return re.search(pattern, raw_text) is not None
+
+from datetime import date, timedelta
+from typing import Optional
+
+def is_payment_date_consistent(
+    issue_date: date,
+    payment_date: Optional[date],
+    payment_terms_days: Optional[int],
+) -> bool:
+    """
+    Check whether payment_date matches issue_date + payment_terms_days,
+    when both are present. If only one (or neither) is set, there's
+    nothing to cross-check, so this returns True — the "at least one
+    must be set" rule is enforced upstream at extraction, not here.
+    """
+    if payment_date is None or payment_terms_days is None:
+        return True
+
+    expected_date = issue_date + timedelta(days=payment_terms_days)
+    return payment_date == expected_date
