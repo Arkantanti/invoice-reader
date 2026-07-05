@@ -1,7 +1,7 @@
 from extraction import extract_invoice_data
 from extraction import extract_text
 from validation import validate_invoice
-from commons import ValidatedInvoice
+from models import ValidatedInvoice
 
 
 def process_invoice(pdf_path: str) -> ValidatedInvoice:

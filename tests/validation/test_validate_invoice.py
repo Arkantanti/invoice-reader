@@ -2,7 +2,7 @@ import pytest
 from datetime import date
 from decimal import Decimal
 
-from commons import InvoiceData
+from models import InvoiceData
 from validation import validate
 from validation.validate import validate_invoice
 

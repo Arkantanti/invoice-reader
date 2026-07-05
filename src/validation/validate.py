@@ -1,4 +1,4 @@
-from commons import InvoiceData, ValidationIssue, ValidatedInvoice
+from models import InvoiceData, ValidationIssue, ValidatedInvoice
 from validation.checks import (
     is_valid_iban,
     is_known_iban_country,

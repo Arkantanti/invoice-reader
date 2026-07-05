@@ -3,7 +3,7 @@ from pydantic import ValidationError
 from datetime import date
 from decimal import Decimal
 
-from commons.invoice_model import InvoiceData
+from models.invoice_model import InvoiceData
 
 
 def make_invoice(**overrides):
