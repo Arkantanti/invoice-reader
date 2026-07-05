@@ -79,6 +79,14 @@ def is_known_iban_country(iban: str) -> bool:
     country_code = iban.replace(" ", "").upper()[:2]
     return country_code in IBAN_LENGTHS
 
+SWIFT_PATTERN = re.compile(r"^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$")
+
+
+def is_valid_swift(swift_bic: str) -> bool:
+    """Structural check only: 8 or 11 chars, correct character classes per segment.
+    Does not verify the bank/country codes actually exist."""
+    return bool(SWIFT_PATTERN.fullmatch(swift_bic))
+
 from decimal import Decimal
 
 def _normalize_for_grounding(text: str) -> str:

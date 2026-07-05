@@ -2,6 +2,7 @@ from commons import InvoiceData, ValidationIssue, ValidatedInvoice
 from validation.checks import (
     is_valid_iban,
     is_known_iban_country,
+    is_valid_swift,
     is_grounded,
     is_amount_grounded,
     is_valid_currency_code,
@@ -23,6 +24,7 @@ def validate_invoice(
         "company_name": is_grounded(invoice.company_name, raw_text),
         "invoice_number": is_grounded(invoice.invoice_number, raw_text),
         "iban": is_grounded(invoice.iban, raw_text),
+        "swift_bic": is_grounded(invoice.swift_bic, raw_text),
         "tax_id": is_grounded(invoice.tax_id, raw_text),
         "amount": is_amount_grounded(invoice.amount, raw_text),
     }
@@ -35,19 +37,33 @@ def validate_invoice(
                 severity="error",
             ))
 
-    # --- IBAN checksum check ---
-    if not is_valid_iban(invoice.iban):
-        issues.append(ValidationIssue(
-            field="iban",
-            message="IBAN failed mod-97 checksum validation",
-            severity="error",
-        ))
-    elif not is_known_iban_country(invoice.iban):
-        issues.append(ValidationIssue(
-            field="iban",
-            message="IBAN country code is not in the known-length table; only checksum was verified",
-            severity="warning",
-        ))
+    # --- IBAN and SWIFT_BIC check ---
+    if is_valid_iban(invoice.iban):
+        if not is_known_iban_country(invoice.iban):
+            issues.append(ValidationIssue(
+                field="bank_account_number",
+                message="IBAN country code is not in the known list",
+                severity="warning",
+            ))
+        if invoice.swift_bic and not is_valid_swift(invoice.swift_bic):
+            issues.append(ValidationIssue(
+                field="swift_bic",
+                message=f"SWIFT/BIC '{invoice.swift_bic}' is not correctly formatted",
+                severity="warning",
+            ))
+    else:
+        if invoice.swift_bic is None:
+            issues.append(ValidationIssue(
+                field="swift_bic",
+                message="swift_bic is required when bank_account_number is not a valid IBAN",
+                severity="error",
+            ))
+        elif not is_valid_swift(invoice.swift_bic):
+            issues.append(ValidationIssue(
+                field="swift_bic",
+                message=f"SWIFT/BIC '{invoice.swift_bic}' is not correctly formatted",
+                severity="error",
+            ))
 
     # --- Currency check ---
     if not is_valid_currency_code(invoice.currency):

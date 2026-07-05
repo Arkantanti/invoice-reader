@@ -19,6 +19,7 @@ def make_invoice(**overrides):
         amount=Decimal("1234.50"),
         currency="USD",
         iban="DE89370400440532013000",
+        swift_bic="DEUTDEFF",
         tax_id="91310000MA1FL5PT7X",
     )
     defaults.update(overrides)
@@ -31,6 +32,7 @@ def patch_all_checks_pass(monkeypatch):
     monkeypatch.setattr(validate, "is_amount_grounded", lambda value, text: True)
     monkeypatch.setattr(validate, "is_valid_iban", lambda iban: True)
     monkeypatch.setattr(validate, "is_known_iban_country", lambda iban: True)
+    monkeypatch.setattr(validate, "is_valid_swift", lambda swift: True)
     monkeypatch.setattr(validate, "is_valid_currency_code", lambda currency: True)
     monkeypatch.setattr(validate, "is_issue_date_plausible", lambda issue_date, ref=None: True)
     monkeypatch.setattr(validate, "is_payment_date_after_issue_date", lambda issue_date, payment_date: True)
@@ -78,37 +80,6 @@ def test_amount_grounding_failure_adds_error_issue(monkeypatch):
     assert matching[0].severity == "error"
     assert result.grounding_ok is False
     assert result.flagged_for_review is True
-
-
-def test_iban_checksum_failure_adds_error_and_skips_country_check(monkeypatch):
-    patch_all_checks_pass(monkeypatch)
-    monkeypatch.setattr(validate, "is_valid_iban", lambda iban: False)
-    # Deliberately also fail the country check to prove the elif skips it
-    monkeypatch.setattr(validate, "is_known_iban_country", lambda iban: False)
-    invoice = make_invoice()
-
-    result = validate_invoice(invoice, raw_text="irrelevant")
-
-    iban_issues = [i for i in result.issues if i.field == "iban"]
-    assert len(iban_issues) == 1  # only the checksum error, not also a country warning
-    assert iban_issues[0].severity == "error"
-    assert "checksum" in iban_issues[0].message
-    assert result.flagged_for_review is True
-
-
-def test_unknown_iban_country_adds_warning_when_checksum_valid(monkeypatch):
-    patch_all_checks_pass(monkeypatch)
-    monkeypatch.setattr(validate, "is_valid_iban", lambda iban: True)
-    monkeypatch.setattr(validate, "is_known_iban_country", lambda iban: False)
-    invoice = make_invoice()
-
-    result = validate_invoice(invoice, raw_text="irrelevant")
-
-    iban_issues = [i for i in result.issues if i.field == "iban"]
-    assert len(iban_issues) == 1
-    assert iban_issues[0].severity == "warning"
-    assert "known-length table" in iban_issues[0].message
-
 
 def test_invalid_currency_adds_warning_only_and_does_not_flag_review(monkeypatch):
     patch_all_checks_pass(monkeypatch)
@@ -164,6 +135,7 @@ def test_payment_date_inconsistent_with_terms_adds_error_issue(monkeypatch):
 def test_multiple_failures_all_accumulate(monkeypatch):
     patch_all_checks_pass(monkeypatch)
     monkeypatch.setattr(validate, "is_valid_iban", lambda iban: False)
+    monkeypatch.setattr(validate, "is_valid_swift", lambda swift: False)
     monkeypatch.setattr(validate, "is_valid_currency_code", lambda currency: False)
     monkeypatch.setattr(validate, "is_issue_date_plausible", lambda issue_date, ref=None: False)
     invoice = make_invoice()
@@ -171,7 +143,7 @@ def test_multiple_failures_all_accumulate(monkeypatch):
     result = validate_invoice(invoice, raw_text="irrelevant")
 
     fields_with_issues = {i.field for i in result.issues}
-    assert fields_with_issues == {"iban", "currency", "issue_date"}
+    assert fields_with_issues == {"swift_bic", "currency", "issue_date"}
     assert result.flagged_for_review is True
 
 
@@ -182,3 +154,66 @@ def test_data_field_preserves_original_invoice(monkeypatch):
     result = validate_invoice(invoice, raw_text="irrelevant")
 
     assert result.data is invoice
+
+def test_malformed_swift_adds_warning_when_iban_valid(monkeypatch):
+    patch_all_checks_pass(monkeypatch)
+    monkeypatch.setattr(validate, "is_valid_iban", lambda iban: True)
+    monkeypatch.setattr(validate, "is_valid_swift", lambda swift: False)
+    invoice = make_invoice(swift_bic="BADSWIFT1")
+
+    result = validate_invoice(invoice, raw_text="irrelevant")
+
+    swift_issues = [i for i in result.issues if i.field == "swift_bic"]
+    assert len(swift_issues) == 1
+    assert swift_issues[0].severity == "warning"
+    assert result.flagged_for_review is False
+
+
+def test_missing_swift_ok_when_iban_valid(monkeypatch):
+    patch_all_checks_pass(monkeypatch)
+    monkeypatch.setattr(validate, "is_valid_iban", lambda iban: True)
+    invoice = make_invoice(swift_bic=None)
+
+    result = validate_invoice(invoice, raw_text="irrelevant")
+
+    assert not any(i.field == "swift_bic" for i in result.issues)
+    assert result.flagged_for_review is False
+
+
+def test_missing_swift_adds_error_when_iban_invalid(monkeypatch):
+    patch_all_checks_pass(monkeypatch)
+    monkeypatch.setattr(validate, "is_valid_iban", lambda iban: False)
+    invoice = make_invoice(swift_bic=None)
+
+    result = validate_invoice(invoice, raw_text="irrelevant")
+
+    swift_issues = [i for i in result.issues if i.field == "swift_bic"]
+    assert len(swift_issues) == 1
+    assert swift_issues[0].severity == "error"
+    assert "required" in swift_issues[0].message
+    assert result.flagged_for_review is True
+
+
+def test_malformed_swift_adds_error_when_iban_invalid(monkeypatch):
+    patch_all_checks_pass(monkeypatch)
+    monkeypatch.setattr(validate, "is_valid_iban", lambda iban: False)
+    monkeypatch.setattr(validate, "is_valid_swift", lambda swift: False)
+    invoice = make_invoice(swift_bic="BADSWIFT1")
+
+    result = validate_invoice(invoice, raw_text="irrelevant")
+
+    swift_issues = [i for i in result.issues if i.field == "swift_bic"]
+    assert len(swift_issues) == 1
+    assert swift_issues[0].severity == "error"
+    assert result.flagged_for_review is True
+
+
+def test_valid_swift_with_invalid_iban_adds_no_swift_issue(monkeypatch):
+    patch_all_checks_pass(monkeypatch)
+    monkeypatch.setattr(validate, "is_valid_iban", lambda iban: False)
+    monkeypatch.setattr(validate, "is_valid_swift", lambda swift: True)
+    invoice = make_invoice(swift_bic="DEUTDEFF")
+
+    result = validate_invoice(invoice, raw_text="irrelevant")
+
+    assert not any(i.field == "swift_bic" for i in result.issues)

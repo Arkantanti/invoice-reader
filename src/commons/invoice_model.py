@@ -11,9 +11,10 @@ class InvoiceData(BaseModel):
     payment_date: Optional[date] = None
     payment_terms_days: Optional[int] = None
     amount: Decimal
-    currency: str  # validated against ISO 4217 list downstream
-    iban: str  # validated via mod-97 downstream
-    tax_id: str  # NIP / USCC / VAT number depending on vendor country
+    currency: Optional[str] = None
+    iban: str
+    swift_bic: Optional[str] = None
+    tax_id: str
 
     @model_validator(mode="after")
     def check_payment_info(self):
