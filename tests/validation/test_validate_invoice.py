@@ -46,7 +46,6 @@ def test_all_checks_pass_no_issues(monkeypatch):
     result = validate_invoice(invoice, raw_text="irrelevant, all checks mocked")
 
     assert result.issues == []
-    assert result.grounding_ok is True
     assert result.flagged_for_review is False
 
 
@@ -64,7 +63,6 @@ def test_string_field_grounding_failure_adds_error_issue(monkeypatch, field_name
     matching = [i for i in result.issues if i.field == field_name]
     assert len(matching) == 1
     assert matching[0].severity == "error"
-    assert result.grounding_ok is False
     assert result.flagged_for_review is True
 
 
@@ -78,7 +76,6 @@ def test_amount_grounding_failure_adds_error_issue(monkeypatch):
     matching = [i for i in result.issues if i.field == "amount"]
     assert len(matching) == 1
     assert matching[0].severity == "error"
-    assert result.grounding_ok is False
     assert result.flagged_for_review is True
 
 def test_invalid_currency_adds_warning_only_and_does_not_flag_review(monkeypatch):
@@ -91,7 +88,6 @@ def test_invalid_currency_adds_warning_only_and_does_not_flag_review(monkeypatch
     currency_issues = [i for i in result.issues if i.field == "currency"]
     assert len(currency_issues) == 1
     assert currency_issues[0].severity == "warning"
-    # A single warning-only issue, with grounding otherwise clean, should not flag for review
     assert result.flagged_for_review is False
 
 

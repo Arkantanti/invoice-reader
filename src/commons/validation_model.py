@@ -9,6 +9,5 @@ class ValidationIssue(BaseModel):
 
 class ValidatedInvoice(BaseModel):
     data: InvoiceData
-    grounding_ok: bool          # values found verbatim in raw PDF text
     issues: list[ValidationIssue] = []
     flagged_for_review: bool = False

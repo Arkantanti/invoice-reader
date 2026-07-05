@@ -96,12 +96,10 @@ def validate_invoice(
         ))
 
     # --- Aggregate outcome ---
-    grounding_ok = all(grounding_results.values())
-    flagged_for_review = any(issue.severity == "error" for issue in issues) or not grounding_ok
+    flagged_for_review = any(issue.severity == "error" for issue in issues)
 
     return ValidatedInvoice(
         data=invoice,
-        grounding_ok=grounding_ok,
         issues=issues,
         flagged_for_review=flagged_for_review,
     )
