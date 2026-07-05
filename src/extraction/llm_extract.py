@@ -3,7 +3,7 @@ from pathlib import Path
 from openai import OpenAI
 
 from commons.invoice_model import InvoiceData
-from config import OPENAI_API_KEY, OPENAI_MODEL
+from .config import OPENAI_API_KEY, OPENAI_MODEL
 
 from typing import Any, cast
 
