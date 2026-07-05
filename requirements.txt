@@ -1,0 +1,9 @@
+# Core pipeline
+openai>=2.44.0
+pdfplumber>=0.11.10
+pydantic>=2.13.4
+python-dotenv>=1.2.2
+
+# UI PDF preview (src/ui)
+pillow>=12.3.0
+pypdfium2>=5.11.0
