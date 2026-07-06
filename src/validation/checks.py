@@ -128,8 +128,15 @@ def is_amount_grounded(extracted_amount: Decimal, raw_text: str) -> bool:
     frac_part = digit_str[-frac_len:] if frac_len else ""
     int_part = int_part or "0"
 
-    int_pattern = r"[.,\s]?".join(list(int_part))
-    pattern = rf"(?<!\d){int_pattern}[.,]{frac_part}(?!\d)"
+    # pdfplumber interleaves numbers with layout noise when extracting them:
+    # stray spaces/newlines, a thousands separator *and* a space (e.g.
+    # "1 ,140.00"), and — for underlined total fields — leader/fill underscores
+    # between the digits (e.g. "Net value ___3_6_.8_0_0_,_40_" for 36.800,40).
+    # Treat any run of whitespace / thousands punctuation / underscore as an
+    # insignificant separator between the digits and around the decimal mark.
+    noise = r"[\s.,_]*"
+    int_pattern = noise.join(list(int_part))
+    pattern = rf"(?<!\d){int_pattern}[\s_]*[.,][\s_]*{frac_part}(?!\d)"
 
     return re.search(pattern, raw_text) is not None
 

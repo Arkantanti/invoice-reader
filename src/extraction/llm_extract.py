@@ -9,7 +9,12 @@ from typing import Any, cast
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-EXTRACTION_PROMPT = """You are an invoice data extraction assistant. This invoice is addressed to {your_company_name} (the buyer). Extract only the vendor/seller's details — the company issuing the invoice and requesting payment — not the buyer's details. Extract fields exactly as they appear on the invoice. Do not infer or calculate values that are not explicitly present."""
+EXTRACTION_PROMPT = """You are an invoice data extraction assistant. This invoice is addressed to {your_company_name} (the buyer). Extract only the vendor/seller's details — the company issuing the invoice and requesting payment — not the buyer's details. Extract text fields (names, addresses, invoice number, IBAN, SWIFT, tax ID) exactly as they appear on the invoice. Do not infer or calculate values that are not explicitly present.
+
+Normalize these fields to a canonical machine format, using the invoice's own locale to interpret them correctly:
+- issue_date and payment_date: output as ISO 8601 YYYY-MM-DD. Read the invoice's date convention to resolve day/month order (e.g. a European invoice showing 09/06/2026 means 2026-06-09).
+- amount: a plain decimal with '.' as the decimal separator and NO thousands separators or currency symbols (e.g. 10.400,00 becomes 10400.00; keep the cents).
+- currency: the ISO 4217 three-letter uppercase code (e.g. PLN, EUR, USD, GBP). Convert a currency symbol or local name to its code when it is unambiguous (e.g. zł -> PLN, € -> EUR, $ -> USD). If the currency genuinely cannot be determined, leave it as written on the invoice rather than guessing."""
 
 def to_strict_schema(model: type[InvoiceData]) -> dict:
     """Patch a Pydantic-generated schema to satisfy OpenAI's strict json_schema mode."""

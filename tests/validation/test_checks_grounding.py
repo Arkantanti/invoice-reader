@@ -39,6 +39,18 @@ def test_is_grounded(extracted, raw_text, expected):
     (Decimal("123.45"), "Total: 123.456 USD", False),
     # Whole-number amount (no meaningful fractional part)
     (Decimal("500.00"), "Total: 500.00 USD", True),
+    # pdfplumber artifacts: a stray space *and* a thousands separator between
+    # digits (space + comma / space + period) must still ground.
+    (Decimal("1140.00"), "Item 1 ,140.00 total", True),
+    (Decimal("4114.44"), "Netto 4 ,114.44", True),
+    (Decimal("875000.00"), "Limit 875 000,00 PLN", True),
+    # Whitespace around the decimal mark
+    (Decimal("1234.50"), "Total: 1.234 , 50 EUR", True),
+    # Underlined total field: pdfplumber interleaves leader underscores between
+    # the digits (real case from an underlined "Net value" line).
+    (Decimal("36800.40"), "Net value ex works _____3_6_.8_0_0_,_40_", True),
+    # Still must not match a bare integer that lacks the cents (no false positive)
+    (Decimal("2026.00"), "Invoice number 2026 / 07", False),
     # Missing raw text
     (Decimal("1234.50"), None, False),
     (Decimal("1234.50"), "", False),
