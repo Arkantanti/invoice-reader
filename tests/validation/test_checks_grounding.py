@@ -1,6 +1,16 @@
 import pytest
 from decimal import Decimal
-from validation.checks import is_grounded, is_amount_grounded
+from validation.checks import is_grounded, is_amount_grounded, has_text_layer
+
+
+@pytest.mark.parametrize("raw_text,expected", [
+    ("Invoice total 100.00", True),
+    ("", False),           # image-only PDF: pdfplumber returns empty string
+    ("   \n\t  ", False),  # whitespace only
+    (None, False),
+])
+def test_has_text_layer(raw_text, expected):
+    assert has_text_layer(raw_text) is expected
 
 
 @pytest.mark.parametrize("extracted,raw_text,expected", [

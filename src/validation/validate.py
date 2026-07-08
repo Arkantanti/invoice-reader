@@ -5,6 +5,7 @@ from validation.checks import (
     is_valid_swift,
     is_grounded,
     is_amount_grounded,
+    has_text_layer,
     is_valid_currency_code,
     is_issue_date_plausible,
     is_payment_date_after_issue_date,
@@ -20,22 +21,34 @@ def validate_invoice(
     issues: list[ValidationIssue] = []
 
     # --- Grounding checks: every string/amount field ---
-    grounding_results = {
-        "company_name": is_grounded(invoice.company_name, raw_text),
-        "invoice_number": is_grounded(invoice.invoice_number, raw_text),
-        "iban": is_grounded(invoice.iban, raw_text),
-        "swift_bic": is_grounded(invoice.swift_bic, raw_text),
-        "tax_id": is_grounded(invoice.tax_id, raw_text),
-        "amount": is_amount_grounded(invoice.amount, raw_text),
-    }
+    # Scanned / image-only PDFs have no extractable text layer, so grounding
+    # can't be performed against them (it would report every field as "not
+    # found"). In that case emit a single warning and skip grounding entirely.
+    # The LLM still reads the image, so the format/sanity checks below remain
+    # meaningful and continue to run.
+    if not has_text_layer(raw_text):
+        issues.append(ValidationIssue(
+            field="document",
+            message="No extractable text layer — the PDF appears to be a scanned image; grounding checks were skipped",
+            severity="warning",
+        ))
+    else:
+        grounding_results = {
+            "company_name": is_grounded(invoice.company_name, raw_text),
+            "invoice_number": is_grounded(invoice.invoice_number, raw_text),
+            "iban": is_grounded(invoice.iban, raw_text),
+            "swift_bic": is_grounded(invoice.swift_bic, raw_text),
+            "tax_id": is_grounded(invoice.tax_id, raw_text),
+            "amount": is_amount_grounded(invoice.amount, raw_text),
+        }
 
-    for field_name, grounded in grounding_results.items():
-        if not grounded:
-            issues.append(ValidationIssue(
-                field=field_name,
-                message=f"{field_name} not found verbatim in source PDF text",
-                severity="warning" if field_name=="company_name" else "error",
-            ))
+        for field_name, grounded in grounding_results.items():
+            if not grounded:
+                issues.append(ValidationIssue(
+                    field=field_name,
+                    message=f"{field_name} not found verbatim in source PDF text",
+                    severity="warning" if field_name=="company_name" else "error",
+                ))
 
     # --- IBAN and SWIFT_BIC check ---
     if is_valid_iban(invoice.iban):

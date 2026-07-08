@@ -140,6 +140,17 @@ def is_amount_grounded(extracted_amount: Decimal, raw_text: str) -> bool:
 
     return re.search(pattern, raw_text) is not None
 
+def has_text_layer(raw_text: str) -> bool:
+    """Whether the PDF yielded any extractable text.
+
+    Scanned / image-only invoices have no text layer, so pdfplumber returns an
+    empty (or whitespace-only) string. Grounding checks compare extracted values
+    against this text, so when it's absent grounding can't be performed at all —
+    the caller should surface that as its own warning rather than reporting every
+    field as "not found verbatim".
+    """
+    return bool(raw_text and raw_text.strip())
+
 from datetime import date, timedelta
 from typing import Optional
 

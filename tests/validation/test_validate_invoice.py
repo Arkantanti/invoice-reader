@@ -49,7 +49,7 @@ def test_all_checks_pass_no_issues(monkeypatch):
     assert result.flagged_for_review is False
 
 
-@pytest.mark.parametrize("field_name", ["company_name", "invoice_number", "iban", "tax_id"])
+@pytest.mark.parametrize("field_name", ["invoice_number", "iban", "tax_id"])
 def test_string_field_grounding_failure_adds_error_issue(monkeypatch, field_name):
     patch_all_checks_pass(monkeypatch)
     monkeypatch.setattr(
@@ -66,6 +66,24 @@ def test_string_field_grounding_failure_adds_error_issue(monkeypatch, field_name
     assert result.flagged_for_review is True
 
 
+def test_company_name_grounding_failure_is_warning_only(monkeypatch):
+    # Company names often don't appear verbatim (formatting/abbreviation), so a
+    # grounding miss on company_name is a warning and does not flag for review.
+    patch_all_checks_pass(monkeypatch)
+    monkeypatch.setattr(
+        validate, "is_grounded",
+        lambda value, text: False if value == invoice.company_name else True,
+    )
+    invoice = make_invoice()
+
+    result = validate_invoice(invoice, raw_text="irrelevant")
+
+    matching = [i for i in result.issues if i.field == "company_name"]
+    assert len(matching) == 1
+    assert matching[0].severity == "warning"
+    assert result.flagged_for_review is False
+
+
 def test_amount_grounding_failure_adds_error_issue(monkeypatch):
     patch_all_checks_pass(monkeypatch)
     monkeypatch.setattr(validate, "is_amount_grounded", lambda value, text: False)
@@ -77,6 +95,36 @@ def test_amount_grounding_failure_adds_error_issue(monkeypatch):
     assert len(matching) == 1
     assert matching[0].severity == "error"
     assert result.flagged_for_review is True
+
+@pytest.mark.parametrize("raw_text", ["", "   \n\t "])
+def test_scanned_image_pdf_warns_and_skips_grounding(monkeypatch, raw_text):
+    patch_all_checks_pass(monkeypatch)
+    # Grounding *would* fail here — assert it is skipped entirely, not run.
+    monkeypatch.setattr(validate, "is_grounded", lambda value, text: False)
+    monkeypatch.setattr(validate, "is_amount_grounded", lambda value, text: False)
+    invoice = make_invoice()
+
+    result = validate_invoice(invoice, raw_text=raw_text)
+
+    doc_issues = [i for i in result.issues if i.field == "document"]
+    assert len(doc_issues) == 1
+    assert doc_issues[0].severity == "warning"
+
+    grounding_fields = {"company_name", "invoice_number", "iban", "swift_bic", "tax_id", "amount"}
+    assert not any(i.field in grounding_fields for i in result.issues)
+    assert result.flagged_for_review is False
+
+
+def test_text_present_still_runs_grounding(monkeypatch):
+    patch_all_checks_pass(monkeypatch)
+    monkeypatch.setattr(validate, "is_amount_grounded", lambda value, text: False)
+    invoice = make_invoice()
+
+    result = validate_invoice(invoice, raw_text="a real text layer with content")
+
+    assert any(i.field == "amount" for i in result.issues)          # grounding ran
+    assert not any(i.field == "document" for i in result.issues)    # no scanned warning
+
 
 def test_invalid_currency_adds_warning_only_and_does_not_flag_review(monkeypatch):
     patch_all_checks_pass(monkeypatch)
