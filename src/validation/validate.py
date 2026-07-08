@@ -34,7 +34,7 @@ def validate_invoice(
             issues.append(ValidationIssue(
                 field=field_name,
                 message=f"{field_name} not found verbatim in source PDF text",
-                severity="error",
+                severity="warning" if field_name=="company_name" else "error",
             ))
 
     # --- IBAN and SWIFT_BIC check ---
