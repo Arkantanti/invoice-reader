@@ -1,9 +1,15 @@
-"""Launch the review UI populated with fabricated data — NO LLM, NO tokens.
+"""Launch the review UI in a fully offline demo mode — NO LLM, NO tokens, ever.
 
-`process_invoice` is never called here. Instead we build a few `InvoiceResult`s
-by hand (a clean one, a flagged one, and a processing-error one) and generate
-matching placeholder PDFs locally with Pillow so the preview pane has something
-real to render. Purely a tool for eyeballing the interface.
+Two things happen here:
+
+1. A few `InvoiceResult`s are fabricated by hand (a clean one, a flagged one, and
+   a processing-error one), with matching placeholder PDFs generated locally so
+   the fields/issues panes and the preview have content to show.
+2. The real pipeline is **stubbed out**: ``ui.processing.process_invoice`` is
+   replaced with a no-network placeholder. So the toolbar works — you can
+   "Choose PDF"/"Choose folder" real invoices and press **Process** — and each
+   PDF is loaded and rendered in the viewer *without* any extraction or LLM call.
+   Clicking Process in the demo can never spend tokens.
 
 Run: ``conda run -n invoice-reader python src/ui/demo.py``
 """
@@ -21,8 +27,35 @@ if SRC not in sys.path:
 from PIL import Image, ImageDraw  # noqa: E402
 
 from models import InvoiceData, ValidatedInvoice, ValidationIssue  # noqa: E402
+from ui import processing  # noqa: E402
 from ui.app import InvoiceReviewApp  # noqa: E402
 from ui.processing import InvoiceResult  # noqa: E402
+
+
+def _demo_process(pdf_path: str) -> ValidatedInvoice:
+    """Stand-in for ``process_invoice`` in the demo — no extraction, no LLM call.
+
+    Returns a placeholder so the selected/processed PDF still shows up in the list
+    and renders in the preview pane; it does not read or interpret the document.
+    """
+    data = InvoiceData(
+        company_name="(demo — not processed)",
+        company_address="—",
+        invoice_number=Path(pdf_path).stem,
+        issue_date=date.today(),
+        payment_terms_days=0,
+        amount=Decimal("0.00"),
+        currency=None,
+        tax_id="—",
+        iban="—",
+        swift_bic=None,
+    )
+    note = ValidationIssue(
+        field="document",
+        message="Demo mode: PDF loaded for preview only — no extraction or LLM call was made.",
+        severity="warning",
+    )
+    return ValidatedInvoice(data=data, issues=[note], flagged_for_review=False)
 
 
 def _result(pdf: Path, data: InvoiceData, issues: list) -> InvoiceResult:
@@ -102,11 +135,16 @@ def _error_result(folder: Path) -> InvoiceResult:
 
 
 def main() -> None:
+    # Disable the real pipeline so "Process" can never reach the LLM. The worker
+    # thread calls processing.process_pdf -> process_invoice; swap the latter.
+    processing.process_invoice = _demo_process
+
     folder = Path(tempfile.mkdtemp(prefix="invoice_ui_demo_"))
     results = [_clean_result(folder), _flagged_result(folder), _error_result(folder)]
 
     app = InvoiceReviewApp()
-    app.folder_var.set(f"DEMO DATA (no LLM) — {folder}")
+    app.title("Invoice Reader — DEMO (no LLM)")
+    app.folder_var.set("DEMO — Process is stubbed; buttons load PDFs for preview only")
     for result in results:
         app._append_result(result)
     app.mainloop()
