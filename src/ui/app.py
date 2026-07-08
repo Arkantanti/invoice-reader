@@ -18,7 +18,7 @@ import sys
 import threading
 from pathlib import Path
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 from PIL import ImageTk
 
@@ -53,6 +53,64 @@ def enable_dpi_awareness() -> None:
             ctypes.windll.user32.SetProcessDPIAware()
     except Exception:  # noqa: BLE001
         pass
+
+class _CellTooltip:
+    """Hover popup showing a Treeview cell's full text when the column is too
+    narrow to display it. Tk has no native tooltip, so this is a tiny Toplevel.
+    """
+
+    def __init__(self, tree: ttk.Treeview) -> None:
+        self.tree = tree
+        self.tip: tk.Toplevel | None = None
+        self._key = None  # (row, column) currently shown
+        tree.bind("<Motion>", self._on_motion, add="+")
+        tree.bind("<Leave>", lambda _e: self._hide(), add="+")
+
+    def _on_motion(self, event) -> None:
+        tree = self.tree
+        row = tree.identify_row(event.y)
+        col = tree.identify_column(event.x)  # "#1", "#2", ...
+        if not row or not col:
+            self._hide()
+            return
+        try:
+            colname = tree["columns"][int(col[1:]) - 1]
+        except (ValueError, IndexError):
+            self._hide()
+            return
+        text = tree.set(row, colname)
+        bbox = tree.bbox(row, colname)
+        if not text or not bbox:
+            self._hide()
+            return
+        # Only pop up when the text is actually wider than the (real) cell.
+        if tkfont.nametofont("TkDefaultFont").measure(text) <= bbox[2] - 8:
+            self._hide()
+            return
+        if (row, colname) == self._key:
+            return  # already showing this cell
+        self._key = (row, colname)
+        self._show(text, event.x_root + 16, event.y_root + 12)
+
+    def _show(self, text: str, x: int, y: int) -> None:
+        self._destroy()
+        self.tip = tk.Toplevel(self.tree)
+        self.tip.wm_overrideredirect(True)  # borderless
+        self.tip.wm_geometry(f"+{x}+{y}")
+        tk.Label(
+            self.tip, text=text, justify="left", wraplength=520,
+            background="#ffffe0", relief="solid", borderwidth=1, padx=6, pady=3,
+        ).pack()
+
+    def _hide(self) -> None:
+        self._key = None
+        self._destroy()
+
+    def _destroy(self) -> None:
+        if self.tip is not None:
+            self.tip.destroy()
+            self.tip = None
+
 
 STATUS_GLYPH = {"ok": "✓", "flagged": "⚠", "error": "✗"}
 
@@ -172,6 +230,10 @@ class InvoiceReviewApp(tk.Tk):
         self.issues_tree.tag_configure("error", background=SEVERITY_BG["error"])
         self.issues_tree.tag_configure("warning", background=SEVERITY_BG["warning"])
         self.issues_tree.pack(fill=tk.BOTH, expand=True)
+
+        # Hover a truncated cell to see its full text (kept referenced so the
+        # tooltip's event bindings aren't garbage-collected).
+        self._tooltips = [_CellTooltip(self.fields_tree), _CellTooltip(self.issues_tree)]
 
         return frame
 
