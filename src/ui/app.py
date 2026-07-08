@@ -35,6 +35,25 @@ def open_in_default_app(path: Path) -> None:
     else:
         subprocess.run(["xdg-open", str(path)], check=False)
 
+
+def enable_dpi_awareness() -> None:
+    """Declare this process DPI-aware so Windows renders it at the monitor's true
+    pixel density instead of bitmap-stretching (blurring) a low-res window.
+
+    Must be called *before* the first Tk window is created. No-op off Windows,
+    and best-effort — if it can't be set (e.g. already set), the app still runs.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)  # per-monitor aware
+        except Exception:  # noqa: BLE001 - older Windows: fall back to system-aware
+            ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:  # noqa: BLE001
+        pass
+
 STATUS_GLYPH = {"ok": "✓", "flagged": "⚠", "error": "✗"}
 
 # ValidationIssue.field values line up with InvoiceData field names except for a
@@ -50,9 +69,17 @@ PREVIEW_GAP = 10     # px between stacked pages
 
 class InvoiceReviewApp(tk.Tk):
     def __init__(self) -> None:
+        enable_dpi_awareness()  # must precede Tk root creation
         super().__init__()
         self.title("Invoice Reader — Review")
-        self.geometry("1200x760")
+
+        # With DPI awareness on, Windows no longer magnifies the UI, so we scale
+        # pixel-sized dimensions ourselves by the display's DPI factor (1.0 at
+        # 96 DPI / 100%). Fonts scale via Tk's own point→pixel scaling.
+        dpi = self.winfo_fpixels("1i")
+        self._ui_scale = dpi / 96.0
+        self.tk.call("tk", "scaling", dpi / 72.0)
+        self.geometry(f"{self._px(1200)}x{self._px(760)}")
 
         self._folder: str | None = None
         self._pending_pdfs: list[Path] = []   # selection awaiting a "Process" click
@@ -75,6 +102,10 @@ class InvoiceReviewApp(tk.Tk):
 
         # Perpetual poller for rendered pages (cheap; runs for the app's life).
         self.after(80, self._poll_render_queue)
+
+    def _px(self, n: int) -> int:
+        """Scale a pixel dimension by the display's DPI factor (1.0 at 96 DPI)."""
+        return round(n * self._ui_scale)
 
     # ------------------------------------------------------------------ layout
     def _build_toolbar(self) -> None:
@@ -105,7 +136,7 @@ class InvoiceReviewApp(tk.Tk):
         paned.add(self._build_preview_pane(paned), weight=3)
 
     def _build_list_pane(self, parent) -> ttk.Frame:
-        frame = ttk.Frame(parent, width=240)
+        frame = ttk.Frame(parent, width=self._px(240))
         scroll = ttk.Scrollbar(frame, orient=tk.VERTICAL)
         self.listbox = tk.Listbox(frame, exportselection=False, yscrollcommand=scroll.set)
         scroll.configure(command=self.listbox.yview)
@@ -123,8 +154,8 @@ class InvoiceReviewApp(tk.Tk):
         self.fields_tree = ttk.Treeview(frame, columns=("field", "value"), show="headings", height=12)
         self.fields_tree.heading("field", text="Field")
         self.fields_tree.heading("value", text="Value")
-        self.fields_tree.column("field", width=170, anchor=tk.W, stretch=False)
-        self.fields_tree.column("value", width=300, anchor=tk.W)
+        self.fields_tree.column("field", width=self._px(170), anchor=tk.W, stretch=False)
+        self.fields_tree.column("value", width=self._px(300), anchor=tk.W)
         self.fields_tree.tag_configure("error", background=SEVERITY_BG["error"])
         self.fields_tree.tag_configure("warning", background=SEVERITY_BG["warning"])
         self.fields_tree.pack(fill=tk.X)
@@ -135,9 +166,9 @@ class InvoiceReviewApp(tk.Tk):
         self.issues_tree.heading("sev", text="Severity")
         self.issues_tree.heading("field", text="Field")
         self.issues_tree.heading("msg", text="Message")
-        self.issues_tree.column("sev", width=70, anchor=tk.W, stretch=False)
-        self.issues_tree.column("field", width=120, anchor=tk.W, stretch=False)
-        self.issues_tree.column("msg", width=320, anchor=tk.W)
+        self.issues_tree.column("sev", width=self._px(70), anchor=tk.W, stretch=False)
+        self.issues_tree.column("field", width=self._px(120), anchor=tk.W, stretch=False)
+        self.issues_tree.column("msg", width=self._px(320), anchor=tk.W)
         self.issues_tree.tag_configure("error", background=SEVERITY_BG["error"])
         self.issues_tree.tag_configure("warning", background=SEVERITY_BG["warning"])
         self.issues_tree.pack(fill=tk.BOTH, expand=True)
