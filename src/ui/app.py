@@ -1,8 +1,9 @@
 """Tkinter desktop app for batch-reviewing invoice extractions.
 
-Workflow: choose a folder of PDF invoices -> process them all -> page through the
-results, seeing the extracted fields (with flagged ones highlighted), the list of
-validation issues, and the rendered PDF page side by side.
+Workflow: choose a folder of PDF invoices (or a single PDF) -> process them ->
+page through the results, seeing the extracted fields (with flagged ones
+highlighted), the list of validation issues, and the rendered PDF page side by
+side.
 
 Threading note: Tkinter is single-threaded and not thread-safe. The slow work
 (LLM pipeline per PDF, and page rasterization) runs on background threads that
@@ -12,6 +13,7 @@ widgets.
 """
 import queue
 import threading
+from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, ttk
 
@@ -56,8 +58,11 @@ class InvoiceReviewApp(tk.Tk):
         bar = ttk.Frame(self, padding=8)
         bar.pack(side=tk.TOP, fill=tk.X)
 
+        self.file_btn = ttk.Button(bar, text="Choose PDF…", command=self._choose_file)
+        self.file_btn.pack(side=tk.LEFT)
+
         self.choose_btn = ttk.Button(bar, text="Choose folder…", command=self._choose_folder)
-        self.choose_btn.pack(side=tk.LEFT)
+        self.choose_btn.pack(side=tk.LEFT, padx=(6, 0))
 
         self.folder_var = tk.StringVar(value="No folder selected")
         ttk.Label(bar, textvariable=self.folder_var).pack(side=tk.LEFT, padx=8)
@@ -148,22 +153,47 @@ class InvoiceReviewApp(tk.Tk):
         self.progress_var.set(f"{count} PDF(s) found")
         self.process_btn.configure(state=(tk.NORMAL if count and not self._processing else tk.DISABLED))
 
-    def _start_processing(self) -> None:
-        if self._processing or not self._folder:
+    def _choose_file(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Choose a PDF invoice",
+            filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
+        )
+        if not path:
             return
-        pdfs = find_pdfs(self._folder)
-        if not pdfs:
+        pdf = Path(path)
+        # Single-file mode: there's no folder, and processing starts immediately.
+        self._folder = None
+        self.folder_var.set(pdf.name)
+        self._run_processing([pdf])
+
+    def _start_processing(self) -> None:
+        if not self._folder:
+            return
+        self._run_processing(find_pdfs(self._folder))
+
+    def _run_processing(self, pdfs) -> None:
+        """Process a list of PDFs (one file or a whole folder) on a worker thread."""
+        pdfs = list(pdfs)
+        if self._processing or not pdfs:
             return
 
         self._processing = True
         self._results = []
         self.listbox.delete(0, tk.END)
         self._clear_detail()
-        self.choose_btn.configure(state=tk.DISABLED)
-        self.process_btn.configure(state=tk.DISABLED)
+        self._set_inputs_enabled(False)
 
         threading.Thread(target=self._process_worker, args=(pdfs,), daemon=True).start()
         self.after(100, self._drain_proc_queue)
+
+    def _set_inputs_enabled(self, enabled: bool) -> None:
+        """Enable/disable the toolbar inputs (all disabled while a run is in flight)."""
+        state = tk.NORMAL if enabled else tk.DISABLED
+        self.file_btn.configure(state=state)
+        self.choose_btn.configure(state=state)
+        # "Process" is only meaningful when a folder with PDFs is selected.
+        has_folder_pdfs = enabled and bool(self._folder) and bool(find_pdfs(self._folder))
+        self.process_btn.configure(state=(tk.NORMAL if has_folder_pdfs else tk.DISABLED))
 
     # ------------------------------------------------------------- background workers
     def _process_worker(self, pdfs) -> None:
@@ -202,8 +232,7 @@ class InvoiceReviewApp(tk.Tk):
         flagged = sum(1 for r in self._results if r.status == "flagged")
         errors = sum(1 for r in self._results if r.status == "error")
         self.progress_var.set(f"Done — {total} processed, {flagged} flagged, {errors} error(s)")
-        self.choose_btn.configure(state=tk.NORMAL)
-        self.process_btn.configure(state=tk.NORMAL)
+        self._set_inputs_enabled(True)
 
     # ----------------------------------------------------------------- detail display
     def _on_select(self, _event=None) -> None:

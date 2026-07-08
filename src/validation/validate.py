@@ -29,7 +29,7 @@ def validate_invoice(
     if not has_text_layer(raw_text):
         issues.append(ValidationIssue(
             field="document",
-            message="No extractable text layer — the PDF appears to be a scanned image; grounding checks were skipped",
+            message="No extractable text layer — the PDF appears to be a scanned image",
             severity="warning",
         ))
     else:
