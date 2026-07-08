@@ -44,6 +44,9 @@ FIELD_ALIASES = {"bank_account_number": "iban"}
 
 SEVERITY_BG = {"error": "#f8d7da", "warning": "#fff3cd"}
 
+PREVIEW_MARGIN = 8   # px around the page(s) in the preview canvas
+PREVIEW_GAP = 10     # px between stacked pages
+
 
 class InvoiceReviewApp(tk.Tk):
     def __init__(self) -> None:
@@ -61,7 +64,11 @@ class InvoiceReviewApp(tk.Tk):
         self._proc_queue: queue.Queue = queue.Queue()
         self._render_queue: queue.Queue = queue.Queue()
         self._render_token = 0
-        self._preview_image: ImageTk.PhotoImage | None = None
+        self._preview_photos: list = []          # ImageTk refs (kept so Tk doesn't GC them)
+        self._fitted_width: int | None = None    # pane width the pages were last rendered for
+        self._pending_render_width = 0           # pane width of the in-flight render
+        self._preserve_scroll_next = False       # keep scroll position on the next draw (resize)
+        self._preview_resize_job = None
 
         self._build_toolbar()
         self._build_body()
@@ -154,13 +161,19 @@ class InvoiceReviewApp(tk.Tk):
         canvas_frame.rowconfigure(0, weight=1)
         canvas_frame.columnconfigure(0, weight=1)
 
+        # Pages are always fitted to the pane width, so only a vertical scrollbar
+        # is needed (for page height / multi-page documents).
         self.canvas = tk.Canvas(canvas_frame, background="#525659", highlightthickness=0)
         vbar = ttk.Scrollbar(canvas_frame, orient=tk.VERTICAL, command=self.canvas.yview)
-        hbar = ttk.Scrollbar(canvas_frame, orient=tk.HORIZONTAL, command=self.canvas.xview)
-        self.canvas.configure(yscrollcommand=vbar.set, xscrollcommand=hbar.set)
+        self.canvas.configure(yscrollcommand=vbar.set)
         self.canvas.grid(row=0, column=0, sticky="nsew")
         vbar.grid(row=0, column=1, sticky="ns")
-        hbar.grid(row=1, column=0, sticky="ew")
+
+        # Re-fit on resize (debounced), and allow mouse-wheel scrolling.
+        self.canvas.bind("<Configure>", self._on_preview_configure)
+        self.canvas.bind("<MouseWheel>", self._on_preview_mousewheel)      # Windows / macOS
+        self.canvas.bind("<Button-4>", lambda e: self.canvas.yview_scroll(-1, "units"))  # Linux
+        self.canvas.bind("<Button-5>", lambda e: self.canvas.yview_scroll(1, "units"))
 
         return frame
 
@@ -270,7 +283,7 @@ class InvoiceReviewApp(tk.Tk):
         self.header_var.set(f"{STATUS_GLYPH[result.status]}  {result.name}   [{result.status}]")
         self._populate_fields(result)
         self._populate_issues(result)
-        self._request_preview(result)
+        self._start_preview_render(clear=True)
         # Only offer "open" when the source file is actually on disk.
         self.open_pdf_btn.configure(state=(tk.NORMAL if result.path.exists() else tk.DISABLED))
 
@@ -324,46 +337,99 @@ class InvoiceReviewApp(tk.Tk):
             self.issues_tree.insert("", tk.END, values=(issue.severity, issue.field, issue.message), tags=(issue.severity,))
 
     # ---------------------------------------------------------------- preview rendering
-    def _request_preview(self, result: InvoiceResult) -> None:
-        # Bump the token so a slow render for a previously-selected invoice is
-        # ignored when it finally arrives.
-        self._render_token += 1
-        token = self._render_token
-        self.canvas.delete("all")
-        self._preview_image = None
+    def _start_preview_render(self, clear: bool) -> None:
+        """Rasterize the current invoice's pages to the pane width on a worker thread.
 
+        ``clear=True`` for a new selection (blank the canvas and reset scroll);
+        ``clear=False`` for a resize re-render (keep the old image visible until
+        the new one is ready, and preserve the scroll position). Each render goes
+        straight to the current pane width via pypdfium2 — sharp at any size.
+        """
+        result = self._current_result
+        if result is None:
+            return
         if not render.RENDER_AVAILABLE:
+            self.canvas.delete("all")
+            self._preview_photos = []
             self.preview_status.set("Preview unavailable (install pypdfium2)")
             return
 
-        self.preview_status.set("Rendering…")
-        path = str(result.path)
-        threading.Thread(target=self._render_worker, args=(token, path), daemon=True).start()
+        width = self.canvas.winfo_width()
+        if width <= 1:  # canvas not laid out yet — retry shortly
+            self.after(50, lambda: self._start_preview_render(clear))
+            return
 
-    def _render_worker(self, token: int, path: str) -> None:
-        self._render_queue.put((token, render.render_page(path, 0)))
+        target_w = max(width - 2 * PREVIEW_MARGIN, 1)
+        self._render_token += 1        # supersede any in-flight render
+        token = self._render_token
+        self._pending_render_width = width
+        self._preserve_scroll_next = not clear
+        if clear:
+            self.canvas.delete("all")
+            self._preview_photos = []
+        self.preview_status.set("Rendering…")
+
+        path = str(result.path)
+        threading.Thread(
+            target=self._render_worker, args=(token, path, target_w), daemon=True
+        ).start()
+
+    def _render_worker(self, token: int, path: str, width: int) -> None:
+        self._render_queue.put((token, render.render_pages_to_width(path, width)))
 
     def _poll_render_queue(self) -> None:
         try:
             while True:
-                token, image = self._render_queue.get_nowait()
+                token, pages = self._render_queue.get_nowait()
                 if token == self._render_token:  # ignore superseded renders
-                    self._display_preview(image)
+                    self._draw_pages(pages)
         except queue.Empty:
             pass
         self.after(80, self._poll_render_queue)
 
-    def _display_preview(self, image) -> None:
+    def _draw_pages(self, pages) -> None:
+        prev_scroll = self.canvas.yview()[0]
         self.canvas.delete("all")
-        if image is None:
-            self._preview_image = None
+        self._preview_photos = []
+        if not pages:
             self.preview_status.set("Preview unavailable for this file")
+            self._fitted_width = None
             return
-        photo = ImageTk.PhotoImage(image)
-        self._preview_image = photo  # keep a reference or Tk garbage-collects it
-        self.canvas.create_image(0, 0, anchor=tk.NW, image=photo)
-        self.canvas.configure(scrollregion=(0, 0, image.width, image.height))
-        self.preview_status.set(f"Page 1  ({image.width}×{image.height}px)")
+
+        y = PREVIEW_MARGIN
+        max_w = 0
+        for img in pages:
+            photo = ImageTk.PhotoImage(img)
+            self._preview_photos.append(photo)  # keep refs so Tk doesn't GC them
+            self.canvas.create_image(PREVIEW_MARGIN, y, anchor=tk.NW, image=photo)
+            y += img.height + PREVIEW_GAP
+            max_w = max(max_w, img.width)
+
+        content_w = max(self.canvas.winfo_width(), max_w + 2 * PREVIEW_MARGIN)
+        self.canvas.configure(scrollregion=(0, 0, content_w, y - PREVIEW_GAP + PREVIEW_MARGIN))
+        self.canvas.yview_moveto(prev_scroll if self._preserve_scroll_next else 0.0)
+        self._fitted_width = self._pending_render_width
+
+        n = len(pages)
+        self.preview_status.set(f"{n} page{'s' if n != 1 else ''} — {pages[0].width}px wide")
+
+    def _on_preview_configure(self, _event=None) -> None:
+        # Debounce: re-render at the new width only after resizing settles.
+        if self._preview_resize_job is not None:
+            self.after_cancel(self._preview_resize_job)
+        self._preview_resize_job = self.after(150, self._rerender_if_width_changed)
+
+    def _rerender_if_width_changed(self) -> None:
+        self._preview_resize_job = None
+        width = self.canvas.winfo_width()
+        if width <= 1 or width == self._fitted_width:  # unchanged / height-only resize
+            return
+        if self._current_result is None or not render.RENDER_AVAILABLE:
+            return
+        self._start_preview_render(clear=False)
+
+    def _on_preview_mousewheel(self, event) -> None:
+        self.canvas.yview_scroll(-int(event.delta / 120), "units")
 
     # ------------------------------------------------------------------------- helpers
     @staticmethod
@@ -376,7 +442,8 @@ class InvoiceReviewApp(tk.Tk):
         self._clear_tree(self.fields_tree)
         self._clear_tree(self.issues_tree)
         self.canvas.delete("all")
-        self._preview_image = None
+        self._preview_photos = []
+        self._fitted_width = None
         self.preview_status.set("")
         self._current_result = None
         self.open_pdf_btn.configure(state=tk.DISABLED)

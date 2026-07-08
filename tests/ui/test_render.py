@@ -45,3 +45,47 @@ def test_page_count(tmp_path):
     pdf_path = _make_pdf(tmp_path / "three.pdf", pages=3)
 
     assert render.page_count(pdf_path) == 3
+
+
+def test_render_pages_to_width_missing_file_returns_empty_list():
+    assert render.render_pages_to_width("does-not-exist.pdf", 400) == []
+
+
+def test_render_pages_to_width_nonpositive_width_returns_empty_list():
+    assert render.render_pages_to_width("whatever.pdf", 0) == []
+
+
+@pytest.mark.skipif(not render.RENDER_AVAILABLE, reason="pypdfium2 not installed")
+def test_render_pages_to_width_renders_all_pages_at_target_width(tmp_path):
+    pdf_path = _make_pdf(tmp_path / "three.pdf", pages=3)
+
+    images = render.render_pages_to_width(pdf_path, 300)
+
+    assert len(images) == 3
+    assert all(isinstance(im, Image.Image) for im in images)
+    # Each page is rasterized to (about) the requested pixel width.
+    assert all(abs(im.width - 300) <= 2 for im in images)
+
+
+@pytest.mark.skipif(not render.RENDER_AVAILABLE, reason="pypdfium2 not installed")
+def test_render_pages_to_width_scales_with_requested_width(tmp_path):
+    pdf_path = _make_pdf(tmp_path / "one.pdf")
+
+    small = render.render_pages_to_width(pdf_path, 200)[0]
+    large = render.render_pages_to_width(pdf_path, 600)[0]
+
+    assert large.width > small.width  # re-rendered sharp at the larger size
+
+
+@pytest.mark.skipif(not render.RENDER_AVAILABLE, reason="pypdfium2 not installed")
+def test_render_pages_to_width_supersample_keeps_target_width(tmp_path):
+    # Supersampling raises internal render resolution but the output is still
+    # exactly the requested display width (only the antialiasing quality differs).
+    pdf_path = _make_pdf(tmp_path / "one.pdf")
+
+    plain = render.render_pages_to_width(pdf_path, 250, supersample=1.0)[0]
+    sharp = render.render_pages_to_width(pdf_path, 250, supersample=3.0)[0]
+
+    assert plain.width == 250
+    assert sharp.width == 250
+    assert sharp.size == plain.size
