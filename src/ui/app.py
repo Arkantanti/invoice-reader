@@ -11,16 +11,29 @@ only ever communicate back by putting messages on ``queue.Queue``s; the Tk main
 loop drains those queues via ``after()`` and is the only thing that touches
 widgets.
 """
+import os
 import queue
+import subprocess
+import sys
 import threading
 from pathlib import Path
 import tkinter as tk
-from tkinter import filedialog, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from PIL import ImageTk
 
 from . import render
 from .processing import InvoiceResult, find_pdfs, process_pdf
+
+
+def open_in_default_app(path: Path) -> None:
+    """Open a file with the OS default application (PDF reader for a .pdf)."""
+    if sys.platform == "win32":
+        os.startfile(str(path))  # type: ignore[attr-defined]
+    elif sys.platform == "darwin":
+        subprocess.run(["open", str(path)], check=False)
+    else:
+        subprocess.run(["xdg-open", str(path)], check=False)
 
 STATUS_GLYPH = {"ok": "✓", "flagged": "⚠", "error": "✗"}
 
@@ -42,6 +55,7 @@ class InvoiceReviewApp(tk.Tk):
         self._pending_pdfs: list[Path] = []   # selection awaiting a "Process" click
         self._results: list[InvoiceResult] = []
         self._run_start_index = 0             # index in _results where the current run began
+        self._current_result: InvoiceResult | None = None
         self._processing = False
 
         self._proc_queue: queue.Queue = queue.Queue()
@@ -126,8 +140,14 @@ class InvoiceReviewApp(tk.Tk):
     def _build_preview_pane(self, parent) -> ttk.Frame:
         frame = ttk.Frame(parent, padding=(0, 6))
 
+        header = ttk.Frame(frame)
+        header.pack(fill=tk.X)
         self.preview_status = tk.StringVar(value="")
-        ttk.Label(frame, textvariable=self.preview_status, padding=(6, 0)).pack(anchor=tk.W)
+        ttk.Label(header, textvariable=self.preview_status, padding=(6, 0)).pack(side=tk.LEFT)
+        self.open_pdf_btn = ttk.Button(
+            header, text="Open in PDF reader", command=self._open_in_system_viewer, state=tk.DISABLED
+        )
+        self.open_pdf_btn.pack(side=tk.RIGHT, padx=6)
 
         canvas_frame = ttk.Frame(frame)
         canvas_frame.pack(fill=tk.BOTH, expand=True)
@@ -246,10 +266,25 @@ class InvoiceReviewApp(tk.Tk):
 
     def _show_result(self, index: int) -> None:
         result = self._results[index]
+        self._current_result = result
         self.header_var.set(f"{STATUS_GLYPH[result.status]}  {result.name}   [{result.status}]")
         self._populate_fields(result)
         self._populate_issues(result)
         self._request_preview(result)
+        # Only offer "open" when the source file is actually on disk.
+        self.open_pdf_btn.configure(state=(tk.NORMAL if result.path.exists() else tk.DISABLED))
+
+    def _open_in_system_viewer(self) -> None:
+        result = self._current_result
+        if result is None:
+            return
+        if not result.path.exists():
+            messagebox.showerror("Open PDF", f"File not found:\n{result.path}")
+            return
+        try:
+            open_in_default_app(result.path)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Open PDF", f"Could not open the PDF:\n{result.path}\n\n{exc}")
 
     def _populate_fields(self, result: InvoiceResult) -> None:
         self._clear_tree(self.fields_tree)
@@ -343,6 +378,8 @@ class InvoiceReviewApp(tk.Tk):
         self.canvas.delete("all")
         self._preview_image = None
         self.preview_status.set("")
+        self._current_result = None
+        self.open_pdf_btn.configure(state=tk.DISABLED)
 
 
 def main() -> None:
