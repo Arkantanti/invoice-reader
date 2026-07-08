@@ -39,7 +39,9 @@ class InvoiceReviewApp(tk.Tk):
         self.geometry("1200x760")
 
         self._folder: str | None = None
+        self._pending_pdfs: list[Path] = []   # selection awaiting a "Process" click
         self._results: list[InvoiceResult] = []
+        self._run_start_index = 0             # index in _results where the current run began
         self._processing = False
 
         self._proc_queue: queue.Queue = queue.Queue()
@@ -58,10 +60,10 @@ class InvoiceReviewApp(tk.Tk):
         bar = ttk.Frame(self, padding=8)
         bar.pack(side=tk.TOP, fill=tk.X)
 
-        self.file_btn = ttk.Button(bar, text="Choose PDF…", command=self._choose_file)
+        self.file_btn = ttk.Button(bar, text="Choose PDF", command=self._choose_file)
         self.file_btn.pack(side=tk.LEFT)
 
-        self.choose_btn = ttk.Button(bar, text="Choose folder…", command=self._choose_folder)
+        self.choose_btn = ttk.Button(bar, text="Choose folder", command=self._choose_folder)
         self.choose_btn.pack(side=tk.LEFT, padx=(6, 0))
 
         self.folder_var = tk.StringVar(value="No folder selected")
@@ -148,10 +150,11 @@ class InvoiceReviewApp(tk.Tk):
         if not path:
             return
         self._folder = path
+        pdfs = find_pdfs(path)
+        self._pending_pdfs = pdfs
         self.folder_var.set(path)
-        count = len(find_pdfs(path))
-        self.progress_var.set(f"{count} PDF(s) found")
-        self.process_btn.configure(state=(tk.NORMAL if count and not self._processing else tk.DISABLED))
+        self.progress_var.set(f"{len(pdfs)} PDF(s) selected — press Process")
+        self.process_btn.configure(state=(tk.NORMAL if pdfs else tk.DISABLED))
 
     def _choose_file(self) -> None:
         path = filedialog.askopenfilename(
@@ -161,26 +164,25 @@ class InvoiceReviewApp(tk.Tk):
         if not path:
             return
         pdf = Path(path)
-        # Single-file mode: there's no folder, and processing starts immediately.
+        # Consistent with batch mode: stage the selection, then wait for "Process".
         self._folder = None
+        self._pending_pdfs = [pdf]
         self.folder_var.set(pdf.name)
-        self._run_processing([pdf])
+        self.progress_var.set("1 PDF selected — press Process")
+        self.process_btn.configure(state=tk.NORMAL)
 
     def _start_processing(self) -> None:
-        if not self._folder:
-            return
-        self._run_processing(find_pdfs(self._folder))
+        self._run_processing(self._pending_pdfs)
 
     def _run_processing(self, pdfs) -> None:
-        """Process a list of PDFs (one file or a whole folder) on a worker thread."""
+        """Process the staged PDFs on a worker thread, appending to any prior results."""
         pdfs = list(pdfs)
         if self._processing or not pdfs:
             return
 
+        self._pending_pdfs = []             # consumed by this run
         self._processing = True
-        self._results = []
-        self.listbox.delete(0, tk.END)
-        self._clear_detail()
+        self._run_start_index = len(self._results)   # append; keep previous results
         self._set_inputs_enabled(False)
 
         threading.Thread(target=self._process_worker, args=(pdfs,), daemon=True).start()
@@ -191,9 +193,9 @@ class InvoiceReviewApp(tk.Tk):
         state = tk.NORMAL if enabled else tk.DISABLED
         self.file_btn.configure(state=state)
         self.choose_btn.configure(state=state)
-        # "Process" is only meaningful when a folder with PDFs is selected.
-        has_folder_pdfs = enabled and bool(self._folder) and bool(find_pdfs(self._folder))
-        self.process_btn.configure(state=(tk.NORMAL if has_folder_pdfs else tk.DISABLED))
+        # "Process" is enabled only when there's a staged selection to run.
+        has_pending = enabled and bool(self._pending_pdfs)
+        self.process_btn.configure(state=(tk.NORMAL if has_pending else tk.DISABLED))
 
     # ------------------------------------------------------------- background workers
     def _process_worker(self, pdfs) -> None:
@@ -220,18 +222,20 @@ class InvoiceReviewApp(tk.Tk):
         self.after(100, self._drain_proc_queue)
 
     def _append_result(self, result: InvoiceResult) -> None:
+        index = len(self._results)
         self._results.append(result)
         self.listbox.insert(tk.END, f"{STATUS_GLYPH[result.status]}  {result.name}")
-        if len(self._results) == 1:
+        if index == self._run_start_index:  # first result of the current run
             self.listbox.selection_clear(0, tk.END)
-            self.listbox.selection_set(0)
-            self._show_result(0)
+            self.listbox.selection_set(index)
+            self.listbox.see(index)
+            self._show_result(index)
 
     def _finish_processing(self, total: int) -> None:
         self._processing = False
         flagged = sum(1 for r in self._results if r.status == "flagged")
         errors = sum(1 for r in self._results if r.status == "error")
-        self.progress_var.set(f"Done — {total} processed, {flagged} flagged, {errors} error(s)")
+        self.progress_var.set(f"Done — {total} processed; {len(self._results)} loaded, {flagged} flagged, {errors} error(s)")
         self._set_inputs_enabled(True)
 
     # ----------------------------------------------------------------- detail display
