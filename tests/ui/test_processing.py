@@ -54,14 +54,20 @@ def test_status_error():
 
 
 def test_process_pdf_success(monkeypatch):
-    sentinel = SimpleNamespace(flagged_for_review=False)
+    data = SimpleNamespace()
+    sentinel = SimpleNamespace(flagged_for_review=False, data=data)
     monkeypatch.setattr(processing, "process_invoice", lambda path: sentinel)
+    monkeypatch.setattr(processing, "extract_text", lambda path: "raw pdf text")
 
     result = process_pdf(Path("whatever.pdf"))
 
     assert result.validated is sentinel
     assert result.error is None
     assert result.status == "ok"
+    # Raw text + the original extraction are retained so fields can be edited /
+    # reverted and re-grounded later without another LLM call.
+    assert result.raw_text == "raw pdf text"
+    assert result.extracted is data
 
 
 def test_process_pdf_captures_errors(monkeypatch):

@@ -7,7 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from models import ValidatedInvoice
+from extraction import extract_text
+from models import InvoiceData, ValidatedInvoice
 from pipeline import process_invoice
 
 
@@ -18,11 +19,18 @@ class InvoiceResult:
     Exactly one of ``validated`` / ``error`` is meaningful: on success
     ``validated`` holds the ``ValidatedInvoice``; on failure ``error`` holds a
     human-readable message and ``validated`` stays ``None``.
+
+    ``raw_text`` and ``extracted`` support in-app editing: the raw PDF text is
+    the ground truth grounding re-checks against after an edit, and ``extracted``
+    is an immutable snapshot of the original LLM extraction so any field can be
+    reverted to what the model produced. Both are only populated on success.
     """
 
     path: Path
     validated: Optional[ValidatedInvoice] = None
     error: Optional[str] = None
+    raw_text: Optional[str] = None
+    extracted: Optional[InvoiceData] = None
 
     @property
     def name(self) -> str:
@@ -58,6 +66,15 @@ def process_pdf(path: Path) -> InvoiceResult:
     """
     try:
         validated = process_invoice(str(path))
-        return InvoiceResult(path=path, validated=validated)
+        # Keep the raw text (ground truth for re-grounding after an edit) and a
+        # snapshot of the original extraction (for per-field revert). Reading the
+        # text again is pdfplumber-only — no LLM, no tokens.
+        raw_text = extract_text(str(path))
+        return InvoiceResult(
+            path=path,
+            validated=validated,
+            raw_text=raw_text,
+            extracted=validated.data,
+        )
     except Exception as exc:  # noqa: BLE001 - surface any failure to the UI
         return InvoiceResult(path=path, error=f"{type(exc).__name__}: {exc}")

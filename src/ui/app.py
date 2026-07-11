@@ -22,7 +22,7 @@ from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 from PIL import ImageTk
 
-from . import render
+from . import editing, render
 from .processing import InvoiceResult, find_pdfs, process_pdf
 
 
@@ -114,6 +114,8 @@ class _CellTooltip:
 
 STATUS_GLYPH = {"ok": "✓", "flagged": "⚠", "error": "✗"}
 
+REVERT_GLYPH = "↺"  # shown in an edited field's revert column; click to undo the edit
+
 # ValidationIssue.field values line up with InvoiceData field names except for a
 # couple that validate.py reports under a different name; map those back so the
 # right table row lights up. The raw field is still shown in the issues list.
@@ -144,6 +146,8 @@ class InvoiceReviewApp(tk.Tk):
         self._results: list[InvoiceResult] = []
         self._run_start_index = 0             # index in _results where the current run began
         self._current_result: InvoiceResult | None = None
+        self._current_index: int | None = None   # index of the shown result in _results
+        self._edit_entry: ttk.Entry | None = None  # in-place cell editor, when open
         self._processing = False
 
         self._proc_queue: queue.Queue = queue.Queue()
@@ -209,14 +213,20 @@ class InvoiceReviewApp(tk.Tk):
         self.header_var = tk.StringVar(value="Select an invoice")
         ttk.Label(frame, textvariable=self.header_var, font=("", 11, "bold")).pack(anchor=tk.W, pady=(0, 6))
 
-        self.fields_tree = ttk.Treeview(frame, columns=("field", "value"), show="headings", height=12)
+        self.fields_tree = ttk.Treeview(frame, columns=("field", "value", "revert"), show="headings", height=12)
         self.fields_tree.heading("field", text="Field")
         self.fields_tree.heading("value", text="Value")
+        self.fields_tree.heading("revert", text="")
         self.fields_tree.column("field", width=self._px(170), anchor=tk.W, stretch=False)
         self.fields_tree.column("value", width=self._px(300), anchor=tk.W)
+        self.fields_tree.column("revert", width=self._px(28), anchor=tk.CENTER, stretch=False)
         self.fields_tree.tag_configure("error", background=SEVERITY_BG["error"])
         self.fields_tree.tag_configure("warning", background=SEVERITY_BG["warning"])
         self.fields_tree.pack(fill=tk.X)
+
+        # Double-click a value to edit it; single-click the ↺ column to revert.
+        self.fields_tree.bind("<Double-1>", self._begin_edit)
+        self.fields_tree.bind("<Button-1>", self._on_fields_click)
 
         ttk.Label(frame, text="Issues", font=("", 10, "bold")).pack(anchor=tk.W, pady=(10, 2))
 
@@ -371,8 +381,10 @@ class InvoiceReviewApp(tk.Tk):
             self._show_result(selection[0])
 
     def _show_result(self, index: int) -> None:
+        self._destroy_editor()
         result = self._results[index]
         self._current_result = result
+        self._current_index = index
         self.header_var.set(f"{STATUS_GLYPH[result.status]}  {result.name}   [{result.status}]")
         self._populate_fields(result)
         self._populate_issues(result)
@@ -395,7 +407,7 @@ class InvoiceReviewApp(tk.Tk):
     def _populate_fields(self, result: InvoiceResult) -> None:
         self._clear_tree(self.fields_tree)
         if result.validated is None:
-            self.fields_tree.insert("", tk.END, values=("(error)", result.error or "Processing failed"), tags=("error",))
+            self.fields_tree.insert("", tk.END, values=("(error)", result.error or "Processing failed", ""), tags=("error",))
             return
 
         severities = self._field_severities(result.validated)
@@ -406,7 +418,8 @@ class InvoiceReviewApp(tk.Tk):
             display = "—" if value is None else str(value)
             sev = severities.get(field_name)
             tags = (sev,) if sev else ()
-            self.fields_tree.insert("", tk.END, values=(field_name, display), tags=tags)
+            revert = REVERT_GLYPH if editing.field_is_edited(result, field_name) else ""
+            self.fields_tree.insert("", tk.END, values=(field_name, display, revert), tags=tags)
 
     @staticmethod
     def _field_severities(validated) -> dict[str, str]:
@@ -428,6 +441,108 @@ class InvoiceReviewApp(tk.Tk):
             return
         for issue in result.validated.issues:
             self.issues_tree.insert("", tk.END, values=(issue.severity, issue.field, issue.message), tags=(issue.severity,))
+
+    # ------------------------------------------------------------------- field editing
+    def _begin_edit(self, event) -> None:
+        """Double-click handler: open an inline editor over a value cell."""
+        result = self._current_result
+        if result is None or result.validated is None:
+            return
+        tree = self.fields_tree
+        row = tree.identify_row(event.y)
+        if not row or tree.identify_column(event.x) != "#2":  # value column only
+            return
+        bbox = tree.bbox(row, "value")
+        if not bbox:
+            return
+        field_name = tree.set(row, "field")
+        shown = tree.set(row, "value")
+        self._destroy_editor()
+
+        entry = ttk.Entry(tree)
+        entry.insert(0, "" if shown == "—" else shown)  # "—" is the display for None
+        entry.select_range(0, tk.END)
+        entry.focus_set()
+        x, y, w, h = bbox
+        entry.place(x=x, y=y, width=w, height=h)
+        entry.bind("<Return>", lambda _e: self._commit_edit(field_name, entry))
+        entry.bind("<FocusOut>", lambda _e: self._commit_edit(field_name, entry))
+        entry.bind("<Escape>", lambda _e: self._cancel_edit(entry))
+        self._edit_entry = entry
+
+    def _commit_edit(self, field_name: str, entry: ttk.Entry) -> None:
+        if self._edit_entry is not entry:  # already committed/cancelled
+            return
+        self._edit_entry = None
+        text = entry.get()
+        entry.destroy()
+
+        index = self._current_index
+        if index is None:
+            return
+        try:
+            updated = editing.apply_field_edit(self._results[index], field_name, text)
+        except Exception as exc:  # noqa: BLE001 - ValidationError etc. -> keep old value
+            messagebox.showerror("Invalid value", f"Could not set {field_name}:\n\n{exc}")
+            return
+        self._results[index] = updated
+        self._refresh_current()
+
+    def _cancel_edit(self, entry: ttk.Entry) -> None:
+        if self._edit_entry is entry:
+            self._edit_entry = None
+        entry.destroy()
+
+    def _destroy_editor(self) -> None:
+        if self._edit_entry is not None:
+            entry, self._edit_entry = self._edit_entry, None
+            entry.destroy()
+
+    def _on_fields_click(self, event) -> None:
+        """Single-click handler: revert a field when its ↺ glyph is clicked."""
+        result = self._current_result
+        if result is None or result.validated is None:
+            return
+        tree = self.fields_tree
+        row = tree.identify_row(event.y)
+        if not row or tree.identify_column(event.x) != "#3":  # revert column only
+            return
+        field_name = tree.set(row, "field")
+        index = self._current_index
+        if index is None or not editing.field_is_edited(result, field_name):
+            return
+        self._destroy_editor()
+        try:
+            updated = editing.revert_field(self._results[index], field_name)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Revert failed", str(exc))
+            return
+        self._results[index] = updated
+        self._refresh_current()
+
+    def _refresh_current(self) -> None:
+        """Re-render the detail panes and list glyph for the current result.
+
+        Called after an edit/revert changes the result (and possibly its
+        flagged/ok status). Does not re-render the PDF preview — the document is
+        unchanged.
+        """
+        index = self._current_index
+        if index is None:
+            return
+        result = self._results[index]
+        self._current_result = result
+
+        # Refresh the list row so its status glyph tracks the new outcome.
+        selected = self.listbox.curselection()
+        self.listbox.delete(index)
+        self.listbox.insert(index, f"{STATUS_GLYPH[result.status]}  {result.name}")
+        if selected and selected[0] == index:
+            self.listbox.selection_set(index)
+
+        self.header_var.set(f"{STATUS_GLYPH[result.status]}  {result.name}   [{result.status}]")
+        self._populate_fields(result)
+        self._populate_issues(result)
 
     # ---------------------------------------------------------------- preview rendering
     def _start_preview_render(self, clear: bool) -> None:
@@ -531,6 +646,7 @@ class InvoiceReviewApp(tk.Tk):
             tree.delete(row)
 
     def _clear_detail(self) -> None:
+        self._destroy_editor()
         self.header_var.set("Select an invoice")
         self._clear_tree(self.fields_tree)
         self._clear_tree(self.issues_tree)
@@ -539,6 +655,7 @@ class InvoiceReviewApp(tk.Tk):
         self._fitted_width = None
         self.preview_status.set("")
         self._current_result = None
+        self._current_index = None
         self.open_pdf_btn.configure(state=tk.DISABLED)
 
 

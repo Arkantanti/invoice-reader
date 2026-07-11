@@ -58,10 +58,11 @@ def _demo_process(pdf_path: str) -> ValidatedInvoice:
     return ValidatedInvoice(data=data, issues=[note], flagged_for_review=False)
 
 
-def _result(pdf: Path, data: InvoiceData, issues: list) -> InvoiceResult:
+def _result(pdf: Path, data: InvoiceData, issues: list, raw_text: str) -> InvoiceResult:
     flagged = any(i.severity == "error" for i in issues)
     validated = ValidatedInvoice(data=data, issues=issues, flagged_for_review=flagged)
-    return InvoiceResult(path=pdf, validated=validated)
+    # raw_text + extracted let the fields be edited (and re-grounded) in the demo.
+    return InvoiceResult(path=pdf, validated=validated, raw_text=raw_text, extracted=data)
 
 
 def _make_pdf(path: Path, lines: list[str]) -> None:
@@ -77,12 +78,13 @@ def _make_pdf(path: Path, lines: list[str]) -> None:
 
 def _clean_result(folder: Path) -> InvoiceResult:
     pdf = folder / "acme_ok.pdf"
-    _make_pdf(pdf, [
+    lines = [
         "ACME Sp. z o.o.", "ul. Testowa 1, 00-001 Warszawa", "",
         "Invoice No: FV/2026/07/001", "Issue date: 2026-07-01",
         "Amount due: 1230.00 PLN", "IBAN: PL61109010140000071219812874",
         "NIP: 5260001246",
-    ])
+    ]
+    _make_pdf(pdf, lines)
     data = InvoiceData(
         company_name="ACME Sp. z o.o.",
         company_address="ul. Testowa 1, 00-001 Warszawa",
@@ -94,17 +96,18 @@ def _clean_result(folder: Path) -> InvoiceResult:
         tax_id="5260001246",
         iban="PL61109010140000071219812874",
     )
-    return _result(pdf, data, [])
+    return _result(pdf, data, [], "\n".join(lines))
 
 
 def _flagged_result(folder: Path) -> InvoiceResult:
     pdf = folder / "globex_flagged.pdf"
-    _make_pdf(pdf, [
+    lines = [
         "Globex International Ltd", "42 Trade Street, London", "",
         "Invoice: INV-2026-5567", "Issued: 2026-07-03",
         "Total: 8,940.00", "IBAN: GB29NWBK60161331926819",
         "SWIFT: NWBKGB2Lxxx", "VAT: GB123456789",
-    ])
+    ]
+    _make_pdf(pdf, lines)
     data = InvoiceData(
         company_name="Globex International Ltd",
         company_address="42 Trade Street, London",
@@ -125,7 +128,7 @@ def _flagged_result(folder: Path) -> InvoiceResult:
         ValidationIssue(field="currency", message="'gbp' is not a recognized ISO 4217 currency code", severity="warning"),
         ValidationIssue(field="bank_account_number", message="IBAN country code is not in the known list", severity="warning"),
     ]
-    return _result(pdf, data, issues)
+    return _result(pdf, data, issues, "\n".join(lines))
 
 
 def _error_result(folder: Path) -> InvoiceResult:
