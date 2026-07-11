@@ -12,7 +12,7 @@ def valid_invoice_json():
         "invoice_number": "INV-2026-001",
         "issue_date": "2026-06-01",
         "payment_date": null,
-        "payment_terms_days": 30,
+        "payment_terms_days": "30",
         "amount": "1234.56",
         "currency": "USD",
         "iban": "DE89370400440532013000",
@@ -74,12 +74,34 @@ def test_extract_invoice_data_encodes_pdf_as_base64(monkeypatch, tmp_path, valid
     assert sent_file_data == f"data:application/pdf;base64,{expected_b64}"
 
 
-def test_extract_invoice_data_raises_on_malformed_response(monkeypatch, tmp_path):
+def test_extract_invoice_data_accepts_partial_response(monkeypatch, tmp_path):
+    # Capture is permissive: a partial extraction must NOT raise (that's the
+    # whole point — one unreadable field can't wipe the rest). Missing fields
+    # come back as None and are flagged later by validation, not here.
     fake_pdf = tmp_path / "invoice.pdf"
     fake_pdf.write_bytes(b"%PDF-1.4 fake content")
 
     fake_response = MagicMock()
     fake_response.output_text = '{"company_name": "Only one field"}'
+
+    mock_create = MagicMock(return_value=fake_response)
+    monkeypatch.setattr("extraction.llm_extract.client.responses.create", mock_create)
+
+    result = extract_invoice_data(str(fake_pdf))
+
+    assert result.company_name == "Only one field"
+    assert result.tax_id is None
+    assert result.amount is None
+
+
+def test_extract_invoice_data_raises_on_unknown_field(monkeypatch, tmp_path):
+    # extra="forbid" still rejects unexpected keys (a schema/model mismatch),
+    # even though missing keys are tolerated.
+    fake_pdf = tmp_path / "invoice.pdf"
+    fake_pdf.write_bytes(b"%PDF-1.4 fake content")
+
+    fake_response = MagicMock()
+    fake_response.output_text = '{"company_name": "x", "surprise_field": "y"}'
 
     mock_create = MagicMock(return_value=fake_response)
     monkeypatch.setattr("extraction.llm_extract.client.responses.create", mock_create)

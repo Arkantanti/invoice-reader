@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from extraction import extract_text
-from models import InvoiceData, ValidatedInvoice
+from models import ExtractedInvoice, ValidatedInvoice
 from pipeline import process_invoice
 
 
@@ -30,7 +30,7 @@ class InvoiceResult:
     validated: Optional[ValidatedInvoice] = None
     error: Optional[str] = None
     raw_text: Optional[str] = None
-    extracted: Optional[InvoiceData] = None
+    extracted: Optional[ExtractedInvoice] = None
 
     @property
     def name(self) -> str:

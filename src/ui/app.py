@@ -116,7 +116,7 @@ STATUS_GLYPH = {"ok": "✓", "flagged": "⚠", "error": "✗"}
 
 REVERT_GLYPH = "↺"  # shown in an edited field's revert column; click to undo the edit
 
-# ValidationIssue.field values line up with InvoiceData field names except for a
+# ValidationIssue.field values line up with ExtractedInvoice field names except for a
 # couple that validate.py reports under a different name; map those back so the
 # right table row lights up. The raw field is still shown in the issues list.
 FIELD_ALIASES = {"bank_account_number": "iban"}
@@ -423,7 +423,7 @@ class InvoiceReviewApp(tk.Tk):
 
     @staticmethod
     def _field_severities(validated) -> dict[str, str]:
-        """Map each flagged InvoiceData field to its worst severity (error > warning)."""
+        """Map each flagged ExtractedInvoice field to its worst severity (error > warning)."""
         worst: dict[str, str] = {}
         for issue in validated.issues:
             field = FIELD_ALIASES.get(issue.field, issue.field)
@@ -480,12 +480,9 @@ class InvoiceReviewApp(tk.Tk):
         index = self._current_index
         if index is None:
             return
-        try:
-            updated = editing.apply_field_edit(self._results[index], field_name, text)
-        except Exception as exc:  # noqa: BLE001 - ValidationError etc. -> keep old value
-            messagebox.showerror("Invalid value", f"Could not set {field_name}:\n\n{exc}")
-            return
-        self._results[index] = updated
+        # Edits can't fail on the value itself — a malformed amount/date just
+        # becomes a validation issue after re-checking, shown like any other.
+        self._results[index] = editing.apply_field_edit(self._results[index], field_name, text)
         self._refresh_current()
 
     def _cancel_edit(self, entry: ttk.Entry) -> None:

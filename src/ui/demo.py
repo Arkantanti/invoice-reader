@@ -17,7 +17,6 @@ import os
 import sys
 import tempfile
 from datetime import date
-from decimal import Decimal
 from pathlib import Path
 
 SRC = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -26,7 +25,7 @@ if SRC not in sys.path:
 
 from PIL import Image, ImageDraw  # noqa: E402
 
-from models import InvoiceData, ValidatedInvoice, ValidationIssue  # noqa: E402
+from models import ExtractedInvoice, ValidatedInvoice, ValidationIssue  # noqa: E402
 from ui import processing  # noqa: E402
 from ui.app import InvoiceReviewApp  # noqa: E402
 from ui.processing import InvoiceResult  # noqa: E402
@@ -38,13 +37,13 @@ def _demo_process(pdf_path: str) -> ValidatedInvoice:
     Returns a placeholder so the selected/processed PDF still shows up in the list
     and renders in the preview pane; it does not read or interpret the document.
     """
-    data = InvoiceData(
+    data = ExtractedInvoice(
         company_name="(demo — not processed)",
         company_address="—",
         invoice_number=Path(pdf_path).stem,
-        issue_date=date.today(),
-        payment_terms_days=0,
-        amount=Decimal("0.00"),
+        issue_date=date.today().isoformat(),
+        payment_terms_days="0",
+        amount="0.00",
         currency=None,
         tax_id="—",
         iban="—",
@@ -58,7 +57,7 @@ def _demo_process(pdf_path: str) -> ValidatedInvoice:
     return ValidatedInvoice(data=data, issues=[note], flagged_for_review=False)
 
 
-def _result(pdf: Path, data: InvoiceData, issues: list, raw_text: str) -> InvoiceResult:
+def _result(pdf: Path, data: ExtractedInvoice, issues: list, raw_text: str) -> InvoiceResult:
     flagged = any(i.severity == "error" for i in issues)
     validated = ValidatedInvoice(data=data, issues=issues, flagged_for_review=flagged)
     # raw_text + extracted let the fields be edited (and re-grounded) in the demo.
@@ -85,13 +84,13 @@ def _clean_result(folder: Path) -> InvoiceResult:
         "NIP: 5260001246",
     ]
     _make_pdf(pdf, lines)
-    data = InvoiceData(
+    data = ExtractedInvoice(
         company_name="ACME Sp. z o.o.",
         company_address="ul. Testowa 1, 00-001 Warszawa",
         invoice_number="FV/2026/07/001",
-        issue_date=date(2026, 7, 1),
-        payment_terms_days=14,
-        amount=Decimal("1230.00"),
+        issue_date="2026-07-01",
+        payment_terms_days="14",
+        amount="1230.00",
         currency="PLN",
         tax_id="5260001246",
         iban="PL61109010140000071219812874",
@@ -108,14 +107,14 @@ def _flagged_result(folder: Path) -> InvoiceResult:
         "SWIFT: NWBKGB2Lxxx", "VAT: GB123456789",
     ]
     _make_pdf(pdf, lines)
-    data = InvoiceData(
+    data = ExtractedInvoice(
         company_name="Globex International Ltd",
         company_address="42 Trade Street, London",
         invoice_number="INV-2026-5567",
-        issue_date=date(2026, 7, 3),
-        payment_date=date(2026, 8, 2),
-        payment_terms_days=14,
-        amount=Decimal("8940.00"),
+        issue_date="2026-07-03",
+        payment_date="2026-08-02",
+        payment_terms_days="14",
+        amount="8940.00",
         currency="gbp",
         tax_id="GB123456789",
         iban="GB29NWBK60161331926819",

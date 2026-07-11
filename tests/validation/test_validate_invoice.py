@@ -1,29 +1,28 @@
 import pytest
-from datetime import date
-from decimal import Decimal
 
-from models import InvoiceData
+from models import ExtractedInvoice
 from validation import validate
 from validation.validate import validate_invoice
 
 
 def make_invoice(**overrides):
-    """Helper: a fully valid invoice, override specific fields per test."""
+    """Helper: a fully valid invoice (all fields captured as strings), override
+    specific fields per test."""
     defaults = dict(
         company_name="ACME Trading Co.",
         company_address="123 Main St, Shanghai, China",
         invoice_number="INV-2026-001",
-        issue_date=date(2026, 6, 1),
-        payment_date=date(2026, 6, 30),
-        payment_terms_days=29,
-        amount=Decimal("1234.50"),
+        issue_date="2026-06-01",
+        payment_date="2026-06-30",
+        payment_terms_days="29",
+        amount="1234.50",
         currency="USD",
         iban="DE89370400440532013000",
         swift_bic="DEUTDEFF",
         tax_id="91310000MA1FL5PT7X",
     )
     defaults.update(overrides)
-    return InvoiceData(**defaults)
+    return ExtractedInvoice(**defaults)
 
 
 def patch_all_checks_pass(monkeypatch):
@@ -261,3 +260,91 @@ def test_valid_swift_with_invalid_iban_adds_no_swift_issue(monkeypatch):
     result = validate_invoice(invoice, raw_text="irrelevant")
 
     assert not any(i.field == "swift_bic" for i in result.issues)
+
+
+# ---------------------------------------------------------- presence / parsing
+
+@pytest.mark.parametrize("field_name", ["invoice_number", "issue_date", "amount", "iban", "tax_id"])
+def test_missing_core_field_adds_error(monkeypatch, field_name):
+    patch_all_checks_pass(monkeypatch)
+    invoice = make_invoice(**{field_name: None})
+
+    result = validate_invoice(invoice, raw_text="irrelevant")
+
+    matching = [i for i in result.issues if i.field == field_name and "missing" in i.message]
+    assert len(matching) == 1
+    assert matching[0].severity == "error"
+    assert result.flagged_for_review is True
+
+
+@pytest.mark.parametrize("field_name", ["company_name", "company_address", "currency"])
+def test_missing_soft_field_adds_warning_only(monkeypatch, field_name):
+    patch_all_checks_pass(monkeypatch)
+    invoice = make_invoice(**{field_name: None})
+
+    result = validate_invoice(invoice, raw_text="irrelevant")
+
+    matching = [i for i in result.issues if i.field == field_name and "missing" in i.message]
+    assert len(matching) == 1
+    assert matching[0].severity == "warning"
+    assert result.flagged_for_review is False
+
+
+def test_unparseable_amount_adds_error_not_exception(monkeypatch):
+    patch_all_checks_pass(monkeypatch)
+    invoice = make_invoice(amount="not-a-number")
+
+    result = validate_invoice(invoice, raw_text="irrelevant")
+
+    matching = [i for i in result.issues if i.field == "amount"]
+    assert len(matching) == 1
+    assert matching[0].severity == "error"
+    assert "not a valid number" in matching[0].message
+    assert result.flagged_for_review is True
+
+
+def test_unparseable_issue_date_adds_error_not_exception(monkeypatch):
+    patch_all_checks_pass(monkeypatch)
+    invoice = make_invoice(issue_date="31/02/2026")
+
+    result = validate_invoice(invoice, raw_text="irrelevant")
+
+    matching = [i for i in result.issues if i.field == "issue_date"]
+    assert len(matching) == 1
+    assert matching[0].severity == "error"
+    assert "not a valid ISO date" in matching[0].message
+
+
+def test_both_payment_fields_missing_adds_error(monkeypatch):
+    patch_all_checks_pass(monkeypatch)
+    invoice = make_invoice(payment_date=None, payment_terms_days=None)
+
+    result = validate_invoice(invoice, raw_text="irrelevant")
+
+    matching = [i for i in result.issues if "Either payment_date" in i.message]
+    assert len(matching) == 1
+    assert matching[0].severity == "error"
+    assert result.flagged_for_review is True
+
+
+def test_payment_date_only_is_accepted(monkeypatch):
+    patch_all_checks_pass(monkeypatch)
+    invoice = make_invoice(payment_date="2026-06-30", payment_terms_days=None)
+
+    result = validate_invoice(invoice, raw_text="irrelevant")
+
+    assert not any("Either payment_date" in i.message for i in result.issues)
+    assert result.flagged_for_review is False
+
+
+def test_partial_extraction_keeps_captured_fields(monkeypatch):
+    # The headline fix: a single unreadable field (tax_id) must not wipe the
+    # rest — the captured data survives and only tax_id is flagged.
+    patch_all_checks_pass(monkeypatch)
+    invoice = make_invoice(tax_id=None)
+
+    result = validate_invoice(invoice, raw_text="irrelevant")
+
+    assert result.data.company_name == "ACME Trading Co."
+    assert result.data.iban == "DE89370400440532013000"
+    assert any(i.field == "tax_id" for i in result.issues)

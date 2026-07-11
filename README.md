@@ -44,7 +44,7 @@ Each issue carries a severity (`error` / `warning`); any `error` sets
 src/
   extraction/    LLM extraction (llm_extract) + raw text (text_extract)
   validation/    validate_invoice() + individual check functions (checks.py)
-  models/        Pydantic models: InvoiceData, ValidationIssue, ValidatedInvoice
+  models/        Pydantic models: ExtractedInvoice, ValidationIssue, ValidatedInvoice
   pipeline/      process_invoice() — orchestrates extraction + validation
   ui/            Tkinter review app: single/batch, PDF preview, tooltips (see below)
   saldeo/        (planned) send processed invoices via the Saldeo API

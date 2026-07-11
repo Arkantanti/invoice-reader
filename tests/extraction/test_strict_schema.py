@@ -1,6 +1,6 @@
 
 from extraction.llm_extract import to_strict_schema
-from models.invoice_model import InvoiceData
+from models.invoice_model import ExtractedInvoice as InvoiceData
 
 def test_additional_properties_is_false():
     schema = to_strict_schema(InvoiceData)

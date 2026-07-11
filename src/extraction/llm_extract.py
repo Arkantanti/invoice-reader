@@ -2,7 +2,7 @@ import base64
 from pathlib import Path
 from openai import OpenAI
 
-from models.invoice_model import InvoiceData
+from models.invoice_model import ExtractedInvoice
 from .config import OPENAI_API_KEY, OPENAI_MODEL
 
 from typing import Any, cast
@@ -16,7 +16,7 @@ Normalize these fields to a canonical machine format, using the invoice's own lo
 - amount: a plain decimal with '.' as the decimal separator and NO thousands separators or currency symbols (e.g. 10.400,00 becomes 10400.00; keep the cents).
 - currency: the ISO 4217 three-letter uppercase code (e.g. PLN, EUR, USD, GBP). Convert a currency symbol or local name to its code when it is unambiguous (e.g. zł -> PLN, € -> EUR, $ -> USD). If the currency genuinely cannot be determined, leave it as written on the invoice rather than guessing."""
 
-def to_strict_schema(model: type[InvoiceData]) -> dict:
+def to_strict_schema(model: type[ExtractedInvoice]) -> dict:
     """Patch a Pydantic-generated schema to satisfy OpenAI's strict json_schema mode."""
     schema = model.model_json_schema()
     schema["additionalProperties"] = False
@@ -26,8 +26,8 @@ def to_strict_schema(model: type[InvoiceData]) -> dict:
     return schema
 
 
-def extract_invoice_data(pdf_path: str) -> InvoiceData:
-    """Send a PDF invoice to the LLM (inline base64) and return structured InvoiceData."""
+def extract_invoice_data(pdf_path: str) -> ExtractedInvoice:
+    """Send a PDF invoice to the LLM (inline base64) and return an ExtractedInvoice."""
     pdf_bytes = Path(pdf_path).read_bytes()
     b64_pdf = base64.b64encode(pdf_bytes).decode("utf-8")
 
@@ -50,10 +50,10 @@ def extract_invoice_data(pdf_path: str) -> InvoiceData:
             "format": {
                 "type": "json_schema",
                 "name": "invoice_data",
-                "schema": to_strict_schema(InvoiceData),
+                "schema": to_strict_schema(ExtractedInvoice),
                 "strict": True,
             }
         }),
     )
 
-    return InvoiceData.model_validate_json(response.output_text)
+    return ExtractedInvoice.model_validate_json(response.output_text)
