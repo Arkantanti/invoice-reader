@@ -3,18 +3,24 @@ from pathlib import Path
 from openai import OpenAI
 
 from models.invoice_model import ExtractedInvoice
-from .config import OPENAI_API_KEY, OPENAI_MODEL
+from .config import OPENAI_API_KEY, OPENAI_MODEL, COMPANY_NAME
 
 from typing import Any, cast
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-EXTRACTION_PROMPT = """You are an invoice data extraction assistant. This invoice is addressed to {your_company_name} (the buyer). Extract only the vendor/seller's details — the company issuing the invoice and requesting payment — not the buyer's details. Extract text fields (names, addresses, invoice number, tax ID) exactly as they appear on the invoice. For the bank account, extract the vendor's IBAN if present, otherwise the local account number as printed. Do not infer or calculate values that are not explicitly present.
+_EXTRACTION_PROMPT_TEMPLATE = """You are an invoice data extraction assistant. This invoice is addressed to {your_company_name} (the buyer). Extract only the vendor/seller's details — the company issuing the invoice and requesting payment — not the buyer's details. Extract text fields (names, addresses, invoice number, tax ID) exactly as they appear on the invoice. For the bank account, extract the vendor's IBAN if present, otherwise the local account number as printed. Do not infer or calculate values that are not explicitly present.
 
 Normalize these fields to a canonical machine format, using the invoice's own locale to interpret them correctly:
 - issue_date and payment_date: output as ISO 8601 YYYY-MM-DD. Read the invoice's date convention to resolve day/month order (e.g. a European invoice showing 09/06/2026 means 2026-06-09).
 - amount: a plain decimal with '.' as the decimal separator and NO thousands separators or currency symbols (e.g. 10.400,00 becomes 10400.00; keep the cents).
 - currency: the ISO 4217 three-letter uppercase code (e.g. PLN, EUR, USD, GBP). Convert a currency symbol or local name to its code when it is unambiguous (e.g. zł -> PLN, € -> EUR, $ -> USD). If the currency genuinely cannot be determined, leave it as written on the invoice rather than guessing."""
+
+# Resolve the buyer name once (falls back to a neutral phrasing if COMPANY_NAME
+# isn't set in the environment).
+EXTRACTION_PROMPT = _EXTRACTION_PROMPT_TEMPLATE.format(
+    your_company_name=COMPANY_NAME or "our company"
+)
 
 def to_strict_schema(model: type[ExtractedInvoice]) -> dict:
     """Patch a Pydantic-generated schema to satisfy OpenAI's strict json_schema mode."""
