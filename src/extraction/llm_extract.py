@@ -9,7 +9,7 @@ from typing import Any, cast
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-EXTRACTION_PROMPT = """You are an invoice data extraction assistant. This invoice is addressed to {your_company_name} (the buyer). Extract only the vendor/seller's details — the company issuing the invoice and requesting payment — not the buyer's details. Extract text fields (names, addresses, invoice number, IBAN, SWIFT, tax ID) exactly as they appear on the invoice. Do not infer or calculate values that are not explicitly present.
+EXTRACTION_PROMPT = """You are an invoice data extraction assistant. This invoice is addressed to {your_company_name} (the buyer). Extract only the vendor/seller's details — the company issuing the invoice and requesting payment — not the buyer's details. Extract text fields (names, addresses, invoice number, tax ID) exactly as they appear on the invoice. For the bank account, extract the vendor's IBAN if present, otherwise the local account number as printed. Do not infer or calculate values that are not explicitly present.
 
 Normalize these fields to a canonical machine format, using the invoice's own locale to interpret them correctly:
 - issue_date and payment_date: output as ISO 8601 YYYY-MM-DD. Read the invoice's date convention to resolve day/month order (e.g. a European invoice showing 09/06/2026 means 2026-06-09).

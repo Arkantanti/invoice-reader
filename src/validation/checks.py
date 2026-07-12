@@ -79,13 +79,20 @@ def is_known_iban_country(iban: str) -> bool:
     country_code = iban.replace(" ", "").upper()[:2]
     return country_code in IBAN_LENGTHS
 
-SWIFT_PATTERN = re.compile(r"^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$")
 
+def is_iban_like(account: str) -> bool:
+    """
+    Whether a value is *shaped* like an IBAN attempt (two letters, two check
+    digits, then alphanumerics) even if the checksum or length is wrong.
 
-def is_valid_swift(swift_bic: str) -> bool:
-    """Structural check only: 8 or 11 chars, correct character classes per segment.
-    Does not verify the bank/country codes actually exist."""
-    return bool(SWIFT_PATTERN.fullmatch(swift_bic))
+    Used to tell a (possibly mistyped) IBAN apart from a plain domestic account
+    number: an IBAN-shaped value that fails ``is_valid_iban`` is almost certainly
+    a transcription error worth flagging, whereas an all-digit domestic account
+    number simply can't be IBAN-validated and is accepted as-is.
+    """
+    if not account:
+        return False
+    return bool(IBAN_GENERAL_PATTERN.match(account.replace(" ", "").upper()))
 
 from decimal import Decimal
 

@@ -15,8 +15,7 @@ def valid_invoice_json():
         "payment_terms_days": "30",
         "amount": "1234.56",
         "currency": "USD",
-        "iban": "DE89370400440532013000",
-        "swift_bic": "COBADEFFXXX",
+        "account": "DE89370400440532013000",
         "tax_id": "91440300MA5FXXXX"
     }"""
 
@@ -35,7 +34,7 @@ def test_extract_invoice_data_parses_valid_response(monkeypatch, tmp_path, valid
 
     assert result.company_name == "Shenzhen Widget Co"
     assert str(result.amount) == "1234.56"
-    assert result.iban == "DE89370400440532013000"
+    assert result.account == "DE89370400440532013000"
 
 
 def test_extract_invoice_data_sends_correct_model_and_schema(monkeypatch, tmp_path, valid_invoice_json):

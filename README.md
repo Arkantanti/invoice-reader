@@ -10,10 +10,11 @@ vendor / accounts-payable workflow, with the extracted data destined for the
 Given a PDF invoice, the pipeline:
 
 1. **Extracts** the vendor/seller fields with an LLM (OpenAI, strict JSON schema)
-   — company details, invoice number, dates, gross amount, currency, tax ID,
-   IBAN, SWIFT/BIC. The prompt normalizes locale-specific formats to canonical
-   machine values: dates to ISO 8601 (`YYYY-MM-DD`), the amount to a plain
-   dot-decimal (no thousands separators), and the currency to its ISO 4217 code.
+   — company details, invoice number, dates, gross amount, currency, tax ID, and
+   bank account (IBAN or local account number). The prompt normalizes
+   locale-specific formats to canonical machine values: dates to ISO 8601
+   (`YYYY-MM-DD`), the amount to a plain dot-decimal (no thousands separators),
+   and the currency to its ISO 4217 code.
 2. **Reads** the PDF's raw text separately (`pdfplumber`) as ground truth.
 3. **Validates** the extraction and produces a `ValidatedInvoice` with a list of
    issues and a `flagged_for_review` flag.
@@ -25,9 +26,10 @@ malformed data so only invoices that genuinely need attention are surfaced:
   text, tolerant of the whitespace, thousands separators and stray characters
   (stray spaces, underscores from underlined total fields) that `pdfplumber`
   scatters through numbers — guarding against hallucinated values.
-- **IBAN** — structural format, country-specific length, and ISO 7064 MOD-97
-  checksum.
-- **SWIFT/BIC** — structural validation; required when the IBAN is invalid.
+- **Account** — a captured IBAN is fully validated (structural format,
+  country-specific length, ISO 7064 MOD-97 checksum); a value that only *looks*
+  like an IBAN but fails is flagged as a likely typo, while a plain domestic
+  account number is accepted as-is (bank/clearing codes aren't modelled).
 - **Currency** — validated against the ISO 4217 code set.
 - **Dates** — issue date not in the future, payment date not before issue date,
   and payment date consistent with `issue_date + payment_terms_days`.

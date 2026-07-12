@@ -46,8 +46,7 @@ def _demo_process(pdf_path: str) -> ValidatedInvoice:
         amount="0.00",
         currency=None,
         tax_id="—",
-        iban="—",
-        swift_bic=None,
+        account="—",
     )
     note = ValidationIssue(
         field="document",
@@ -93,7 +92,7 @@ def _clean_result(folder: Path) -> InvoiceResult:
         amount="1230.00",
         currency="PLN",
         tax_id="5260001246",
-        iban="PL61109010140000071219812874",
+        account="PL61109010140000071219812874",
     )
     return _result(pdf, data, [], "\n".join(lines))
 
@@ -103,8 +102,8 @@ def _flagged_result(folder: Path) -> InvoiceResult:
     lines = [
         "Globex International Ltd", "42 Trade Street, London", "",
         "Invoice: INV-2026-5567", "Issued: 2026-07-03",
-        "Total: 8,940.00", "IBAN: GB29NWBK60161331926819",
-        "SWIFT: NWBKGB2Lxxx", "VAT: GB123456789",
+        "Total: 8,940.00", "Account: GB29NWBK60161331926819",
+        "VAT: GB123456789",
     ]
     _make_pdf(pdf, lines)
     data = ExtractedInvoice(
@@ -117,15 +116,13 @@ def _flagged_result(folder: Path) -> InvoiceResult:
         amount="8940.00",
         currency="gbp",
         tax_id="GB123456789",
-        iban="GB29NWBK60161331926819",
-        swift_bic="NWBKGB2Lxxx",
+        account="GB29NWBK6016133192681",  # mistyped IBAN (one digit short)
     )
     issues = [
         ValidationIssue(field="amount", message="amount not found verbatim in source PDF text", severity="error"),
         ValidationIssue(field="payment_date", message="payment_date does not match issue_date + payment_terms_days", severity="error"),
-        ValidationIssue(field="swift_bic", message="SWIFT/BIC 'NWBKGB2Lxxx' is not correctly formatted", severity="warning"),
+        ValidationIssue(field="account", message="'GB29NWBK6016133192681' looks like an IBAN but is not valid (bad structure or checksum)", severity="error"),
         ValidationIssue(field="currency", message="'gbp' is not a recognized ISO 4217 currency code", severity="warning"),
-        ValidationIssue(field="bank_account_number", message="IBAN country code is not in the known list", severity="warning"),
     ]
     return _result(pdf, data, issues, "\n".join(lines))
 

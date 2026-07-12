@@ -21,8 +21,7 @@ RAW_TEXT = (
     "Invoice INV-2026-001\n"
     "Date 2026-06-01  Due 2026-06-30\n"
     "Total 1234.50 USD\n"
-    "IBAN DE89370400440532013000\n"
-    "SWIFT DEUTDEFF\n"
+    "Account DE89370400440532013000\n"
     "Tax 91310000MA1FL5PT7X\n"
 )
 
@@ -38,8 +37,7 @@ def make_data(**overrides) -> ExtractedInvoice:
         payment_terms_days="29",
         amount="1234.50",
         currency="USD",
-        iban="DE89370400440532013000",
-        swift_bic="DEUTDEFF",
+        account="DE89370400440532013000",
         tax_id="91310000MA1FL5PT7X",
     )
     defaults.update(overrides)

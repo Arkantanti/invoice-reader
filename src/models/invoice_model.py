@@ -28,6 +28,5 @@ class ExtractedInvoice(BaseModel):
     payment_terms_days: Optional[str] = Field(default=None, description="Payment term in days from the issue date, if stated (e.g. 'Net 30').")
     amount: Optional[str] = Field(default=None, description="Total gross amount due (including tax) as a plain dot-decimal, not the net/subtotal.")
     currency: Optional[str] = Field(default=None, description="ISO 4217 three-letter currency code.")
-    swift_bic: Optional[str] = Field(default=None, description="Vendor's SWIFT/BIC code, if present.")
     tax_id: Optional[str] = Field(default=None, description="Tax ID of the vendor/seller company, not the buyer.")
-    iban: Optional[str] = Field(default=None, description="Vendor's bank account IBAN for receiving payment.")
+    account: Optional[str] = Field(default=None, description="Vendor's bank account for receiving payment — an IBAN where applicable, otherwise the local account number as printed.")

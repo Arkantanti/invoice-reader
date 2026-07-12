@@ -116,11 +116,6 @@ STATUS_GLYPH = {"ok": "✓", "flagged": "⚠", "error": "✗"}
 
 REVERT_GLYPH = "↺"  # shown in an edited field's revert column; click to undo the edit
 
-# ValidationIssue.field values line up with ExtractedInvoice field names except for a
-# couple that validate.py reports under a different name; map those back so the
-# right table row lights up. The raw field is still shown in the issues list.
-FIELD_ALIASES = {"bank_account_number": "iban"}
-
 SEVERITY_BG = {"error": "#f8d7da", "warning": "#fff3cd"}
 
 PREVIEW_MARGIN = 8   # px around the page(s) in the preview canvas
@@ -423,10 +418,14 @@ class InvoiceReviewApp(tk.Tk):
 
     @staticmethod
     def _field_severities(validated) -> dict[str, str]:
-        """Map each flagged ExtractedInvoice field to its worst severity (error > warning)."""
+        """Map each flagged ExtractedInvoice field to its worst severity (error > warning).
+
+        Issue ``field`` values match model field names directly; issues that don't
+        correspond to a field row (e.g. ``document``) simply highlight nothing.
+        """
         worst: dict[str, str] = {}
         for issue in validated.issues:
-            field = FIELD_ALIASES.get(issue.field, issue.field)
+            field = issue.field
             if issue.severity == "error" or worst.get(field) != "error":
                 worst[field] = issue.severity
         return worst

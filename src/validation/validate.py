@@ -6,7 +6,7 @@ from models import ExtractedInvoice, ValidationIssue, ValidatedInvoice
 from validation.checks import (
     is_valid_iban,
     is_known_iban_country,
-    is_valid_swift,
+    is_iban_like,
     is_grounded,
     is_amount_grounded,
     has_text_layer,
@@ -19,12 +19,12 @@ from validation.checks import (
 # Missing-field severity policy. A field the LLM couldn't read comes through as
 # None; whether that flags the invoice for review depends on how load-bearing the
 # field is for actually paying the invoice.
-REQUIRED_ERROR_FIELDS = ("invoice_number", "issue_date", "amount", "iban", "tax_id")
+REQUIRED_ERROR_FIELDS = ("invoice_number", "issue_date", "amount", "account", "tax_id")
 REQUIRED_WARNING_FIELDS = ("company_name", "company_address", "currency")
 
 # Fields grounded verbatim against the PDF text (amount is grounded separately,
 # from its parsed value). company_name is a soft grounding miss (see below).
-_GROUNDED_STRING_FIELDS = ("company_name", "invoice_number", "iban", "swift_bic", "tax_id")
+_GROUNDED_STRING_FIELDS = ("company_name", "invoice_number", "account", "tax_id")
 
 
 def _parse_date(raw: Optional[str], field: str, issues: list[ValidationIssue]) -> Optional[date]:
@@ -125,34 +125,27 @@ def validate_invoice(
                     severity="warning" if field_name == "company_name" else "error",
                 ))
 
-    # --- IBAN and SWIFT_BIC check (only when an IBAN was captured) ---
-    if invoice.iban:
-        if is_valid_iban(invoice.iban):
-            if not is_known_iban_country(invoice.iban):
+    # --- Account check (only when an account was captured) ---
+    # The account may be an IBAN or a plain domestic account number. When it's an
+    # IBAN we can fully validate it (structure + country + checksum); when it only
+    # looks like an IBAN but doesn't validate, that's almost certainly a mistyped
+    # IBAN, so flag it. An all-digit domestic account number can't be format-checked
+    # (we don't model bank/clearing codes) and is accepted as-is — presence and
+    # grounding are its only guards.
+    if invoice.account:
+        if is_valid_iban(invoice.account):
+            if not is_known_iban_country(invoice.account):
                 issues.append(ValidationIssue(
-                    field="bank_account_number",
+                    field="account",
                     message="IBAN country code is not in the known list",
                     severity="warning",
                 ))
-            if invoice.swift_bic and not is_valid_swift(invoice.swift_bic):
-                issues.append(ValidationIssue(
-                    field="swift_bic",
-                    message=f"SWIFT/BIC '{invoice.swift_bic}' is not correctly formatted",
-                    severity="warning",
-                ))
-        else:
-            if invoice.swift_bic is None:
-                issues.append(ValidationIssue(
-                    field="swift_bic",
-                    message="swift_bic is required when bank_account_number is not a valid IBAN",
-                    severity="error",
-                ))
-            elif not is_valid_swift(invoice.swift_bic):
-                issues.append(ValidationIssue(
-                    field="swift_bic",
-                    message=f"SWIFT/BIC '{invoice.swift_bic}' is not correctly formatted",
-                    severity="error",
-                ))
+        elif is_iban_like(invoice.account):
+            issues.append(ValidationIssue(
+                field="account",
+                message=f"'{invoice.account}' looks like an IBAN but is not valid (bad structure or checksum)",
+                severity="error",
+            ))
 
     # --- Currency check (only when a currency was captured) ---
     if invoice.currency and not is_valid_currency_code(invoice.currency):

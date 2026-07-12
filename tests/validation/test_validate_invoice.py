@@ -17,8 +17,7 @@ def make_invoice(**overrides):
         payment_terms_days="29",
         amount="1234.50",
         currency="USD",
-        iban="DE89370400440532013000",
-        swift_bic="DEUTDEFF",
+        account="DE89370400440532013000",
         tax_id="91310000MA1FL5PT7X",
     )
     defaults.update(overrides)
@@ -29,9 +28,9 @@ def patch_all_checks_pass(monkeypatch):
     """Patch every check function to return True, as a clean baseline."""
     monkeypatch.setattr(validate, "is_grounded", lambda value, text: True)
     monkeypatch.setattr(validate, "is_amount_grounded", lambda value, text: True)
-    monkeypatch.setattr(validate, "is_valid_iban", lambda iban: True)
-    monkeypatch.setattr(validate, "is_known_iban_country", lambda iban: True)
-    monkeypatch.setattr(validate, "is_valid_swift", lambda swift: True)
+    monkeypatch.setattr(validate, "is_valid_iban", lambda account: True)
+    monkeypatch.setattr(validate, "is_known_iban_country", lambda account: True)
+    monkeypatch.setattr(validate, "is_iban_like", lambda account: False)
     monkeypatch.setattr(validate, "is_valid_currency_code", lambda currency: True)
     monkeypatch.setattr(validate, "is_issue_date_plausible", lambda issue_date, ref=None: True)
     monkeypatch.setattr(validate, "is_payment_date_after_issue_date", lambda issue_date, payment_date: True)
@@ -48,7 +47,7 @@ def test_all_checks_pass_no_issues(monkeypatch):
     assert result.flagged_for_review is False
 
 
-@pytest.mark.parametrize("field_name", ["invoice_number", "iban", "tax_id"])
+@pytest.mark.parametrize("field_name", ["invoice_number", "account", "tax_id"])
 def test_string_field_grounding_failure_adds_error_issue(monkeypatch, field_name):
     patch_all_checks_pass(monkeypatch)
     monkeypatch.setattr(
@@ -109,7 +108,7 @@ def test_scanned_image_pdf_warns_and_skips_grounding(monkeypatch, raw_text):
     assert len(doc_issues) == 1
     assert doc_issues[0].severity == "warning"
 
-    grounding_fields = {"company_name", "invoice_number", "iban", "swift_bic", "tax_id", "amount"}
+    grounding_fields = {"company_name", "invoice_number", "account", "tax_id", "amount"}
     assert not any(i.field in grounding_fields for i in result.issues)
     assert result.flagged_for_review is False
 
@@ -177,8 +176,8 @@ def test_payment_date_inconsistent_with_terms_adds_error_issue(monkeypatch):
 
 def test_multiple_failures_all_accumulate(monkeypatch):
     patch_all_checks_pass(monkeypatch)
-    monkeypatch.setattr(validate, "is_valid_iban", lambda iban: False)
-    monkeypatch.setattr(validate, "is_valid_swift", lambda swift: False)
+    monkeypatch.setattr(validate, "is_valid_iban", lambda account: False)
+    monkeypatch.setattr(validate, "is_iban_like", lambda account: True)
     monkeypatch.setattr(validate, "is_valid_currency_code", lambda currency: False)
     monkeypatch.setattr(validate, "is_issue_date_plausible", lambda issue_date, ref=None: False)
     invoice = make_invoice()
@@ -186,7 +185,7 @@ def test_multiple_failures_all_accumulate(monkeypatch):
     result = validate_invoice(invoice, raw_text="irrelevant")
 
     fields_with_issues = {i.field for i in result.issues}
-    assert fields_with_issues == {"swift_bic", "currency", "issue_date"}
+    assert fields_with_issues == {"account", "currency", "issue_date"}
     assert result.flagged_for_review is True
 
 
@@ -198,73 +197,64 @@ def test_data_field_preserves_original_invoice(monkeypatch):
 
     assert result.data is invoice
 
-def test_malformed_swift_adds_warning_when_iban_valid(monkeypatch):
+
+# ----------------------------------------------------------------- account rule
+
+def test_valid_iban_known_country_adds_no_account_issue(monkeypatch):
     patch_all_checks_pass(monkeypatch)
-    monkeypatch.setattr(validate, "is_valid_iban", lambda iban: True)
-    monkeypatch.setattr(validate, "is_valid_swift", lambda swift: False)
-    invoice = make_invoice(swift_bic="BADSWIFT1")
+    invoice = make_invoice()
 
     result = validate_invoice(invoice, raw_text="irrelevant")
 
-    swift_issues = [i for i in result.issues if i.field == "swift_bic"]
-    assert len(swift_issues) == 1
-    assert swift_issues[0].severity == "warning"
+    assert not any(i.field == "account" for i in result.issues)
+
+
+def test_valid_iban_unknown_country_adds_warning(monkeypatch):
+    patch_all_checks_pass(monkeypatch)
+    monkeypatch.setattr(validate, "is_known_iban_country", lambda account: False)
+    invoice = make_invoice()
+
+    result = validate_invoice(invoice, raw_text="irrelevant")
+
+    account_issues = [i for i in result.issues if i.field == "account"]
+    assert len(account_issues) == 1
+    assert account_issues[0].severity == "warning"
     assert result.flagged_for_review is False
 
 
-def test_missing_swift_ok_when_iban_valid(monkeypatch):
+def test_plain_domestic_account_number_is_accepted(monkeypatch):
+    # Not an IBAN and not IBAN-shaped (all digits) -> accepted as-is, no error.
     patch_all_checks_pass(monkeypatch)
-    monkeypatch.setattr(validate, "is_valid_iban", lambda iban: True)
-    invoice = make_invoice(swift_bic=None)
+    monkeypatch.setattr(validate, "is_valid_iban", lambda account: False)
+    monkeypatch.setattr(validate, "is_iban_like", lambda account: False)
+    invoice = make_invoice(account="1234567890")
 
     result = validate_invoice(invoice, raw_text="irrelevant")
 
-    assert not any(i.field == "swift_bic" for i in result.issues)
+    assert not any(i.field == "account" for i in result.issues)
     assert result.flagged_for_review is False
 
 
-def test_missing_swift_adds_error_when_iban_invalid(monkeypatch):
+def test_iban_like_but_invalid_adds_error(monkeypatch):
+    # Looks like an IBAN (2 letters + 2 digits + ...) but fails validation ->
+    # almost certainly a mistyped IBAN, so flag it.
     patch_all_checks_pass(monkeypatch)
-    monkeypatch.setattr(validate, "is_valid_iban", lambda iban: False)
-    invoice = make_invoice(swift_bic=None)
+    monkeypatch.setattr(validate, "is_valid_iban", lambda account: False)
+    monkeypatch.setattr(validate, "is_iban_like", lambda account: True)
+    invoice = make_invoice(account="DE8937040044053201300")
 
     result = validate_invoice(invoice, raw_text="irrelevant")
 
-    swift_issues = [i for i in result.issues if i.field == "swift_bic"]
-    assert len(swift_issues) == 1
-    assert swift_issues[0].severity == "error"
-    assert "required" in swift_issues[0].message
+    account_issues = [i for i in result.issues if i.field == "account"]
+    assert len(account_issues) == 1
+    assert account_issues[0].severity == "error"
+    assert "looks like an IBAN" in account_issues[0].message
     assert result.flagged_for_review is True
-
-
-def test_malformed_swift_adds_error_when_iban_invalid(monkeypatch):
-    patch_all_checks_pass(monkeypatch)
-    monkeypatch.setattr(validate, "is_valid_iban", lambda iban: False)
-    monkeypatch.setattr(validate, "is_valid_swift", lambda swift: False)
-    invoice = make_invoice(swift_bic="BADSWIFT1")
-
-    result = validate_invoice(invoice, raw_text="irrelevant")
-
-    swift_issues = [i for i in result.issues if i.field == "swift_bic"]
-    assert len(swift_issues) == 1
-    assert swift_issues[0].severity == "error"
-    assert result.flagged_for_review is True
-
-
-def test_valid_swift_with_invalid_iban_adds_no_swift_issue(monkeypatch):
-    patch_all_checks_pass(monkeypatch)
-    monkeypatch.setattr(validate, "is_valid_iban", lambda iban: False)
-    monkeypatch.setattr(validate, "is_valid_swift", lambda swift: True)
-    invoice = make_invoice(swift_bic="DEUTDEFF")
-
-    result = validate_invoice(invoice, raw_text="irrelevant")
-
-    assert not any(i.field == "swift_bic" for i in result.issues)
 
 
 # ---------------------------------------------------------- presence / parsing
 
-@pytest.mark.parametrize("field_name", ["invoice_number", "issue_date", "amount", "iban", "tax_id"])
+@pytest.mark.parametrize("field_name", ["invoice_number", "issue_date", "amount", "account", "tax_id"])
 def test_missing_core_field_adds_error(monkeypatch, field_name):
     patch_all_checks_pass(monkeypatch)
     invoice = make_invoice(**{field_name: None})
@@ -346,5 +336,5 @@ def test_partial_extraction_keeps_captured_fields(monkeypatch):
     result = validate_invoice(invoice, raw_text="irrelevant")
 
     assert result.data.company_name == "ACME Trading Co."
-    assert result.data.iban == "DE89370400440532013000"
+    assert result.data.account == "DE89370400440532013000"
     assert any(i.field == "tax_id" for i in result.issues)
